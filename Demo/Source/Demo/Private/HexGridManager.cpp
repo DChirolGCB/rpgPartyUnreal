@@ -142,3 +142,12 @@ FVector UHexGridManager::ComputeTileSpawnPosition(int32 Q, int32 R, float LocalT
 
     return FVector(FinalX, FinalY, FinalZ);
 }
+
+AActor* UHexGridManager::GetHexTileAt(const FHexAxialCoordinates& Coords) const
+{
+    if (const TWeakObjectPtr<AActor>* TilePtr = HexTiles.Find(Coords))
+    {
+        return TilePtr->Get();
+    }
+    return nullptr;
+}

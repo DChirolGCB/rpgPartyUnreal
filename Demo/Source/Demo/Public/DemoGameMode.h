@@ -1,10 +1,15 @@
+// DemoGameMode.h
+
 #pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
-#include "HexGridManager.h"
-#include "HexPathfinder.h"
 #include "DemoGameMode.generated.h"
+
+// Forward declarations
+class UHexGridManager;
+class AHexTile;
+class UHexPathfinder;
 
 UCLASS()
 class DEMO_API ADemoGameMode : public AGameModeBase
@@ -16,16 +21,23 @@ public:
 
     virtual void BeginPlay() override;
 
+    UFUNCTION(BlueprintCallable)
+    void HandleTileClicked(AHexTile* ClickedTile);
+
+    UFUNCTION(BlueprintCallable, Category = "Grid")
+    UHexGridManager* GetHexGridManager() const;
+
 protected:
-    UPROPERTY(EditDefaultsOnly, Category = "Hex Grid")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid")
     TSubclassOf<AHexTile> HexTileClass;
 
-    UPROPERTY()
+    // ✅ Cette ligne est la clé :
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid", meta = (ExposeOnSpawn = true))
     UHexGridManager* GridManager;
 
     UPROPERTY()
     UHexPathfinder* Pathfinder;
 
-    UPROPERTY(EditDefaultsOnly, Category = "Grid")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid")
     int32 GridRadius = 5;
 };

@@ -40,6 +40,7 @@ public:
     TArray<FHexAxialCoordinates> GetNeighbors(const FHexAxialCoordinates& Coords);
 
     const TMap<FHexAxialCoordinates, TWeakObjectPtr<AActor>>& GetHexTiles() const { return HexTiles; }
+    void SetGridManager(UHexGridManager* InGridManager) { GridManager = InGridManager; }
 
     // Rayon de tuile (taille visuelle)
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
@@ -52,10 +53,13 @@ protected:
     virtual void BeginPlay() override;
 
 private:
-    int32 GridRadius = 10;
+    int32 GridRadius = 10; 
     TSubclassOf<AHexTile> HexTileClass;
 
     TMap<FHexAxialCoordinates, TWeakObjectPtr<AActor>> HexTiles;
 
     static const TArray<FHexAxialCoordinates> HexDirections;
+
+    UPROPERTY()
+    UHexGridManager* GridManager;
 };

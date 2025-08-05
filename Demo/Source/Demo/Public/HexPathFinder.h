@@ -13,11 +13,10 @@ class DEMO_API UHexPathfinder : public UObject
 public:
     UHexPathfinder();
 
-private:
-    UPROPERTY()
-    TWeakObjectPtr<class UHexGridManager> GridManager;
-
 public:
+
+    void SetGridManager(UHexGridManager* InGridManager);
+
     UFUNCTION(BlueprintCallable, Category = "Pathfinding")
     void Initialize(UHexGridManager* InGridManager);
     
@@ -27,4 +26,7 @@ public:
 private:
     float CalculateHeuristic(const FHexAxialCoordinates& Start, const FHexAxialCoordinates& Goal) const;
     TArray<FHexAxialCoordinates> ReconstructPath(const FHexAxialCoordinates& Goal, const TMap<FHexAxialCoordinates, FHexAxialCoordinates>& CameFrom);
+    
+    UPROPERTY()
+    UHexGridManager* GridManager;
 };

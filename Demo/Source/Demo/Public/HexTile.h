@@ -32,4 +32,5 @@ public:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
     void SetCoordinates(FHexAxialCoordinates InCoords);
+    const FHexAxialCoordinates& GetCoordinates() const { return AxialCoords; }
 };

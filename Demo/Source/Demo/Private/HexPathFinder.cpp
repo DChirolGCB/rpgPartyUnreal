@@ -14,7 +14,7 @@ TArray<FHexAxialCoordinates> UHexPathfinder::FindPath(const FHexAxialCoordinates
 {
     UE_LOG(LogTemp, Warning, TEXT("FindPath - Start: (%d, %d), Goal: (%d, %d)"), Start.Q, Start.R, Goal.Q, Goal.R);
 
-    if (!GridManager.IsValid())
+    if (!IsValid(GridManager))
     {
         return TArray<FHexAxialCoordinates>();
     }
@@ -113,4 +113,9 @@ TArray<FHexAxialCoordinates> UHexPathfinder::ReconstructPath(const FHexAxialCoor
     }
 
     return Path;
+}
+
+void UHexPathfinder::SetGridManager(UHexGridManager* InGridManager)
+{
+    GridManager = InGridManager;
 }
