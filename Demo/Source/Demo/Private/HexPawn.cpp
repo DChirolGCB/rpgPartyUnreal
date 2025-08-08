@@ -7,9 +7,9 @@
 
 AHexPawn::AHexPawn()
 {
-    PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bCanEverTick = true;
 
-    MovementTimeline = CreateDefaultSubobject<UTimelineComponent>(TEXT("MovementTimeline"));
+	MovementTimeline = CreateDefaultSubobject<UTimelineComponent>(TEXT("MovementTimeline"));
 }
 
 void AHexPawn::BeginPlay()
@@ -31,95 +31,134 @@ void AHexPawn::BeginPlay()
     }
 }
 
+
 void AHexPawn::Tick(float DeltaTime)
 {
-    Super::Tick(DeltaTime);
+	Super::Tick(DeltaTime);
 
-    if (MovementTimeline)
-    {
-        MovementTimeline->TickComponent(DeltaTime, ELevelTick::LEVELTICK_TimeOnly, nullptr);
-    }
+	if (MovementTimeline)
+	{
+		MovementTimeline->TickComponent(DeltaTime, ELevelTick::LEVELTICK_TimeOnly, nullptr);
+	}
 }
 
-void AHexPawn::StartPathFollowing(const TArray<FHexAxialCoordinates>& InPath)
+void AHexPawn::StartPathFollowing(const TArray<FHexAxialCoordinates> &InPath)
 {
-    if (InPath.Num() == 0)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("Empty path"));
-        return;
-    }
+	if (InPath.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Empty path"));
+		return;
+	}
 
-    PathToFollow = InPath;
-    CurrentStepIndex = 0;
+	PathToFollow = InPath;
+	CurrentStepIndex = 0;
 
-    MoveToNextStep();
+	MoveToNextStep();
 }
 
 void AHexPawn::MoveToNextStep()
 {
-    if (CurrentStepIndex >= PathToFollow.Num())
-    {
-        OnMovementComplete();
-        return;
-    }
+	if (CurrentStepIndex >= PathToFollow.Num())
+	{
+		OnMovementComplete();
+		return;
+	}
 
-    // Récupération de la tuile cible via coordonnées
-    const FHexAxialCoordinates& TargetCoords = PathToFollow[CurrentStepIndex];
+	// Récupération de la tuile cible via coordonnées
+	const FHexAxialCoordinates &TargetCoords = PathToFollow[CurrentStepIndex];
 
-    UWorld* World = GetWorld();
-	if (!World) return;
+	UWorld *World = GetWorld();
+	if (!World)
+		return;
 
-	ADemoGameMode* GameMode = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(World));
-	if (!GameMode) return;
+	ADemoGameMode *GameMode = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(World));
+	if (!GameMode)
+		return;
 
-	UHexGridManager* GridManager = GameMode->GetHexGridManager();
-	if (!GridManager) return;
+	UHexGridManager *GridManager = GameMode->GetHexGridManager();
+	if (!GridManager)
+		return;
 
-    AActor* TileActor = GridManager->GetHexTileAt(TargetCoords);
-	AHexTile* TargetTile = Cast<AHexTile>(TileActor);
-	if (!TargetTile) return;
+	AActor *TileActor = GridManager->GetHexTileAt(TargetCoords);
+	AHexTile *TargetTile = Cast<AHexTile>(TileActor);
+	if (!TargetTile)
+		return;
 
-    StartLocation = GetActorLocation();
-    TargetLocation = TargetTile->GetActorLocation();
+	StartLocation = GetActorLocation();
+	TargetLocation = TargetTile->GetActorLocation();
 
-    CurrentStepIndex++;
+	CurrentStepIndex++;
 
-    MovementTimeline->PlayFromStart();
+	MovementTimeline->PlayFromStart();
 }
 
 void AHexPawn::OnMovementUpdate(float Alpha)
 {
-    FVector NewLocation = FMath::Lerp(StartLocation, TargetLocation, Alpha);
-    SetActorLocation(NewLocation);
+	FVector NewLocation = FMath::Lerp(StartLocation, TargetLocation, Alpha);
+	SetActorLocation(NewLocation);
 }
 
 void AHexPawn::OnMovementComplete()
 {
-    SetActorLocation(TargetLocation);
+	SetActorLocation(TargetLocation);
 
-    // MAJ de la tuile courante
+	// MAJ de la tuile courante
+	UWorld *World = GetWorld();
+	if (!World)
+		return;
+
+	UHexGridManager *GridManager = Cast<UHexGridManager>(UGameplayStatics::GetActorOfClass(World, UHexGridManager::StaticClass()));
+	if (!GridManager)
+		return;
+
+	FHitResult Hit;
+	FVector TraceStart = GetActorLocation() + FVector(0, 0, 100);
+	FVector TraceEnd = GetActorLocation() + FVector(0, 0, -1000);
+
+	if (World->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_Visibility))
+	{
+		AHexTile *HitTile = Cast<AHexTile>(Hit.GetActor());
+		if (HitTile)
+		{
+			CurrentTile = HitTile;
+		}
+	}
+
+	// Si on a encore des étapes
+	if (CurrentStepIndex < PathToFollow.Num())
+	{
+		MoveToNextStep();
+	}
+}
+
+void AHexPawn::InitializePawnStartTile(const FHexAxialCoordinates& StartCoords)
+{
     UWorld* World = GetWorld();
     if (!World) return;
 
-    UHexGridManager* GridManager = Cast<UHexGridManager>(UGameplayStatics::GetActorOfClass(World, UHexGridManager::StaticClass()));
+    ADemoGameMode* GameMode = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(World));
+    if (!GameMode) return;
+
+    UHexGridManager* GridManager = GameMode->GetHexGridManager();
     if (!GridManager) return;
 
-    FHitResult Hit;
-    FVector TraceStart = GetActorLocation() + FVector(0, 0, 100);
-    FVector TraceEnd = GetActorLocation() + FVector(0, 0, -1000);
-
-    if (World->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_Visibility))
+    AActor* TileActor = GridManager->GetHexTileAt(StartCoords);
+    if (!TileActor)
     {
-        AHexTile* HitTile = Cast<AHexTile>(Hit.GetActor());
-        if (HitTile)
-        {
-            CurrentTile = HitTile;
-        }
+        UE_LOG(LogTemp, Error, TEXT("InitializePawnStartTile: No tile at (%d, %d)"), StartCoords.Q, StartCoords.R);
+        return;
     }
 
-    // Si on a encore des étapes
-    if (CurrentStepIndex < PathToFollow.Num())
-    {
-        MoveToNextStep();
-    }
+    AHexTile* Tile = Cast<AHexTile>(TileActor);
+    if (!Tile) return;
+
+    CurrentTile = Tile;
+    SetActorLocation(Tile->GetActorLocation());
+
+    UE_LOG(LogTemp, Warning, TEXT("Pawn initialized on tile (%d, %d)"), StartCoords.Q, StartCoords.R);
+}
+
+void AHexPawn::SetCurrentTile(AHexTile* NewTile)
+{
+    CurrentTile = NewTile;
 }

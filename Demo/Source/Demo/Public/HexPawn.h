@@ -26,6 +26,12 @@ public:
 
     AHexTile* GetCurrentTile() const { return CurrentTile; }
 
+	UFUNCTION(BlueprintCallable)
+    void InitializePawnStartTile(const FHexAxialCoordinates& StartCoords);
+
+	UFUNCTION(BlueprintCallable, Category = "Movement")
+	void SetCurrentTile(AHexTile* NewTile);
+
 protected:
     UPROPERTY(EditAnywhere, Category="Movement")
     UCurveFloat* MovementCurve;

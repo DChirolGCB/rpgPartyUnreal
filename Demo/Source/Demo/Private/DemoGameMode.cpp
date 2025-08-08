@@ -1,91 +1,130 @@
+// DemoGameMode.cpp
+
 #include "DemoGameMode.h"
-#include "HexTile.h"
-#include "HexPawn.h"
-#include "HexPathfinder.h"
-#include "HexGridManager.h"
 #include "Kismet/GameplayStatics.h"
-#include "EngineUtils.h" // Pour TActorIterator
+#include "Engine/World.h"
+#include "HexPawn.h"
 
 ADemoGameMode::ADemoGameMode()
 {
+    // Crée les deux composants runtime
     GridManager = CreateDefaultSubobject<UHexGridManager>(TEXT("HexGridManager"));
-    AddOwnedComponent(GridManager); // optionnel mais plus propre
+    PathFinder  = CreateDefaultSubobject<UHexPathFinder>(TEXT("HexPathFinder"));
+
+    AddOwnedComponent(GridManager);
+    AddOwnedComponent(PathFinder);
+    if (!ensure(GridManager))  // vérifier que le component a bien été créé
+    {
+        UE_LOG(LogTemp, Error, TEXT("DemoGameMode constructor: GridManager is NULL!"));
+    }
+    static ConstructorHelpers::FClassFinder<AHexTile> TileBP(TEXT("/Game/Blueprints/BP_HexTile"));
+    if (TileBP.Succeeded())
+    {
+        HexTileClass = TileBP.Class;
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("DemoGameMode: impossible de trouver /Game/Blueprints/BP_HexTile"));
+    }
+
+    ensure(HexTileClass);
+    // On ne change pas les paramètres BlueprintPawnClass, HUDClass, etc.
 }
 
 void ADemoGameMode::BeginPlay()
 {
-     Super::BeginPlay();
+    Super::BeginPlay();
 
-    Pathfinder = NewObject<UHexPathfinder>(this);
-
-    // 🔁 Mieux : recherche l’acteur avec le composant UHexGridManager
-    for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+    if (!ensure(GridManager))
     {
-        if (UHexGridManager* FoundGridManager = It->FindComponentByClass<UHexGridManager>())
-        {
-            GridManager = FoundGridManager;
-            break;
-        }
+        UE_LOG(LogTemp, Error, TEXT("DemoGameMode BeginPlay: GridManager is NULL, aborting grid gen"));
+        return;
     }
-
-    if (!GridManager)
+    if (!ensure(HexTileClass))
     {
-        UE_LOG(LogTemp, Error, TEXT("Failed to find GridManager!"));
+        UE_LOG(LogTemp, Error, TEXT("DemoGameMode BeginPlay: HexTileClass is NULL, aborting grid gen"));
         return;
     }
 
-    if (!HexTileClass)
+    if (GridManager && *HexTileClass)
     {
-        UE_LOG(LogTemp, Error, TEXT("HexTileClass is not set!"));
+        GridManager->InitializeGrid(GridRadius, HexTileClass);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("DemoGameMode: GridManager ou HexTileClass invalide"));
         return;
     }
 
-    GridManager->InitializeGrid(GridRadius, HexTileClass);
-    GridManager->GenerateGrid();
+    // Log de vérif
+    UE_LOG(LogTemp, Warning, TEXT("DemoGameMode BeginPlay : grille générée"));
+
+    // Coordonnées de départ
+    FHexAxialCoordinates StartCoords(0, 6);
+    InitializePawnStartTile(StartCoords);
 }
 
 void ADemoGameMode::HandleTileClicked(AHexTile* ClickedTile)
 {
-    if (!ClickedTile || !GridManager || !Pathfinder)
+    if (!ClickedTile || !GridManager || !PathFinder)
     {
-        UE_LOG(LogTemp, Warning, TEXT("Missing references in HandleTileClicked"));
+        UE_LOG(LogTemp, Error, TEXT("HandleTileClicked : pointeur null"));
         return;
     }
 
-    // Récupérer le pawn du joueur
-    AHexPawn* HexPawn = Cast<AHexPawn>(UGameplayStatics::GetPlayerPawn(this, 0));
-    if (!HexPawn)
+    // Convertit la tuile cliquée en coords
+    FHexAxialCoordinates Target = ClickedTile->GetAxialCoordinates();
+
+    AHexPawn* Pawn = Cast<AHexPawn>(UGameplayStatics::GetPlayerPawn(this, 0));
+    if (!Pawn)
     {
-        UE_LOG(LogTemp, Warning, TEXT("No AHexPawn found!"));
+        UE_LOG(LogTemp, Error, TEXT("HandleTileClicked : pawn invalide"));
         return;
     }
 
-    // Coordonnées de départ
-    AHexTile* StartTile = HexPawn->GetCurrentTile();
-    if (!StartTile)
+    const AHexTile* CurrTile = Pawn->GetCurrentTile();
+    if (!CurrTile)
     {
-        UE_LOG(LogTemp, Warning, TEXT("No start tile assigned to the pawn"));
+        UE_LOG(LogTemp, Error, TEXT("HandleTileClicked : pawn sans tuile actuelle"));
         return;
     }
 
-    FHexAxialCoordinates StartCoords = StartTile->GetCoordinates();
-    FHexAxialCoordinates TargetCoords = ClickedTile->GetCoordinates();
-
-    // Générer un chemin
-    Pathfinder->SetGridManager(GridManager);
-    TArray<FHexAxialCoordinates> Path = Pathfinder->FindPath(StartCoords, TargetCoords);
-
+    FHexAxialCoordinates Start = CurrTile->GetAxialCoordinates();
+    TArray<FHexAxialCoordinates> Path = PathFinder->FindPath(Start, Target);
     if (Path.Num() == 0)
     {
-        UE_LOG(LogTemp, Warning, TEXT("No valid path found."));
+        UE_LOG(LogTemp, Warning, TEXT("HandleTileClicked : aucun chemin trouvé"));
         return;
     }
 
-    // Démarrer le déplacement du pawn
-    HexPawn->StartPathFollowing(Path);
+    Pawn->StartPathFollowing(Path);
 }
 
-UHexGridManager *ADemoGameMode::GetHexGridManager() const
+void ADemoGameMode::InitializePawnStartTile(const FHexAxialCoordinates& StartCoords)
 {
-    return GridManager;
+    if (!GridManager)
+    {
+        UE_LOG(LogTemp, Error, TEXT("InitializePawnStartTile : GridManager null"));
+        return;
+    }
+
+    AHexTile* Tile = GridManager->GetHexTileAt(StartCoords);
+    if (!Tile)
+    {
+        UE_LOG(LogTemp, Error, TEXT("InitializePawnStartTile : pas de tuile à (%d,%d)"),
+               StartCoords.Q, StartCoords.R);
+        return;
+    }
+
+    APawn* P = UGameplayStatics::GetPlayerPawn(this, 0);
+    if (AHexPawn* HexP = Cast<AHexPawn>(P))
+    {
+        HexP->SetCurrentTile(Tile);
+        UE_LOG(LogTemp, Warning, TEXT("Pawn démarré sur (%d,%d)"),
+               StartCoords.Q, StartCoords.R);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("InitializePawnStartTile : pawn non HexPawn"));
+    }
 }

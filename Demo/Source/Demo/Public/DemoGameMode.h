@@ -1,15 +1,14 @@
 // DemoGameMode.h
-
 #pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
-#include "DemoGameMode.generated.h"
+#include "HexTile.h"
+#include "HexPawn.h"
+#include "HexGridManager.h"
+#include "HexPathFinder.h"    // <— corriger le nom du header
 
-// Forward declarations
-class UHexGridManager;
-class AHexTile;
-class UHexPathfinder;
+#include "DemoGameMode.generated.h"
 
 UCLASS()
 class DEMO_API ADemoGameMode : public AGameModeBase
@@ -19,25 +18,25 @@ class DEMO_API ADemoGameMode : public AGameModeBase
 public:
     ADemoGameMode();
 
-    virtual void BeginPlay() override;
+    UHexGridManager* GetHexGridManager() const { return GridManager; }
 
-    UFUNCTION(BlueprintCallable)
     void HandleTileClicked(AHexTile* ClickedTile);
 
-    UFUNCTION(BlueprintCallable, Category = "Grid")
-    UHexGridManager* GetHexGridManager() const;
-
 protected:
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid")
+    virtual void BeginPlay() override;
+
+    void InitializePawnStartTile(const FHexAxialCoordinates& StartCoords);
+
+    UPROPERTY(EditDefaultsOnly, Category="Hex")
     TSubclassOf<AHexTile> HexTileClass;
 
-    // ✅ Cette ligne est la clé :
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid", meta = (ExposeOnSpawn = true))
+    UPROPERTY(EditDefaultsOnly, Category="Hex")
+    int32 GridRadius = 10;
+
+    UPROPERTY()
     UHexGridManager* GridManager;
 
     UPROPERTY()
-    UHexPathfinder* Pathfinder;
+    UHexPathFinder* PathFinder;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid")
-    int32 GridRadius = 5;
 };

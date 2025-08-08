@@ -1,65 +1,114 @@
+// HexGridManager.h
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Components/SceneComponent.h"
+#include "Components/ActorComponent.h"
+#include "HexTile.h"
 #include "HexCoordinates.h"
 #include "HexGridManager.generated.h"
 
-class AHexTile;
-
-UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
-class DEMO_API UHexGridManager : public USceneComponent
+/**
+ * Gère la génération et l'indexation d'une grille hexagonale (axial Q,R).
+ * - Placement XY inspiré de l'ancienne version (offset demi-ligne sur parité configurable)
+ * - Z déterminé par un line trace vertical (ECC_Visibility + fallback Static/Dynamic)
+ * - Stockage des tuiles et requêtes (GetHexTileAt / GetNeighbors)
+ */
+UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
+class DEMO_API UHexGridManager : public UActorComponent
 {
     GENERATED_BODY()
 
 public:
+    // --- ctor ---
     UHexGridManager();
 
-    // Nouvelle méthode d'initialisation
-    void InitializeGrid(int32 InRadius, TSubclassOf<AHexTile> InHexTileClass);
+    // --- API ---
 
-    // Génère la grille
-    void GenerateGrid();
+    /** Génère la grille (rayon en tuiles, et classe de tuile à instancier) */
+    UFUNCTION(BlueprintCallable, Category = "Hex|Generation")
+    void InitializeGrid(int32 Radius, TSubclassOf<AHexTile> TileClass);
 
-    // Calcule la position d'une tuile avec collision Z
-    FVector ComputeTileSpawnPosition(int32 Q, int32 R, float TileSize, const FVector& CenterLocation);
+    /** Accès direct à une tuile (nullptr si absente) */
+    UFUNCTION(BlueprintCallable, Category = "Hex|Query")
+    AHexTile *GetHexTileAt(const FHexAxialCoordinates &Coords) const;
 
-    // Accès à une tuile par coordonnées
-    AActor* GetHexTileAt(const FHexAxialCoordinates& Coords) const;
+    /** Renvoie la liste des voisins existants autour d’une coordonnée */
+    UFUNCTION(BlueprintCallable, Category = "Hex|Query")
+    TArray<FHexAxialCoordinates> GetNeighbors(const FHexAxialCoordinates &Coords) const;
 
-    // Enregistre une tuile dans la map
-    void RegisterHexTile(AActor* Tile, const FHexAxialCoordinates& Coords);
+    /** Accès lecture à la map des tuiles (utile pour pathfinding etc.) */
+    const TMap<FHexAxialCoordinates, AHexTile *> &GetHexTiles() const { return TilesMap; }
 
-    // Converti Offset -> Axial
-    static FHexAxialCoordinates OffsetToAxial(int32 X, int32 Y);
+public:
+    // --- Layout éditable (pour recaler exactement ton ancien rendu) ---
 
-    // Vérifie qu'une coordonnée est valide
-    bool IsValidCoordinate(const FHexAxialCoordinates& Coords);
+    // Layout défauts (tes “bonnes valeurs”)
+    UPROPERTY(EditAnywhere, Category = "Hex|Layout", meta = (ClampMin = "1.0"))
+    float TileSize = 250.f;
 
-    // Retourne les coordonnées voisines
-    TArray<FHexAxialCoordinates> GetNeighbors(const FHexAxialCoordinates& Coords);
+    UPROPERTY(EditAnywhere, Category = "Hex|Layout", meta = (ClampMin = "0.0"))
+    float XSpacingFactor = 0.3f;
 
-    const TMap<FHexAxialCoordinates, TWeakObjectPtr<AActor>>& GetHexTiles() const { return HexTiles; }
-    void SetGridManager(UHexGridManager* InGridManager) { GridManager = InGridManager; }
+    UPROPERTY(EditAnywhere, Category = "Hex|Layout", meta = (ClampMin = "0.0"))
+    float YSpacingFactor = 0.8f;
 
-    // Rayon de tuile (taille visuelle)
-    UPROPERTY(EditAnywhere, BlueprintReadWrite)
-    float TileSize = 231.0f;
+    UPROPERTY(EditAnywhere, Category = "Hex|Layout", meta = (ClampMin = "0.0"))
+    float RowOffsetFactor = 0.5f;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hex Grid")
-    FVector GridOrigin = FVector::ZeroVector;
+    UPROPERTY(EditAnywhere, Category = "Hex|Layout")
+    bool bOffsetOnQ = true;
 
-protected:
-    virtual void BeginPlay() override;
+    UPROPERTY(EditAnywhere, Category = "Hex|Layout")
+    FVector2D GlobalXYNudge = FVector2D::ZeroVector;
 
-private:
-    int32 GridRadius = 10; 
+    UPROPERTY(EditAnywhere, Category = "Hex|Layout")
+    FVector GridOrigin = FVector(750.f, 700.f, 0.f);
+
+    /** Petit +Z global pour éviter le z-fighting (acteur relevé) */
+    UPROPERTY(EditAnywhere, Category = "Hex|Layout", meta = (ClampMin = "0.0"))
+    float TileZOffset = 1.0f;
+
+    // --- public --- (dans ta classe UHexGridManager)
+    UPROPERTY(EditAnywhere, Category = "Hex|Generation")
+    int32 GridRadius = 10;
+
+    UPROPERTY(EditAnywhere, Category = "Hex|Generation")
     TSubclassOf<AHexTile> HexTileClass;
 
-    TMap<FHexAxialCoordinates, TWeakObjectPtr<AActor>> HexTiles;
+    // Bouton cliquable dans les détails (éditeur & en PIE) pour regénérer
+    UFUNCTION(BlueprintCallable, CallInEditor, Category = "Hex|Generation")
+    void RebuildGrid();
 
-    static const TArray<FHexAxialCoordinates> HexDirections;
+public:
+    // --- Trace / Z ---
 
+    /** Hauteur au-dessus d’où commence le trace */
+    UPROPERTY(EditAnywhere, Category = "Hex|Trace", meta = (ClampMin = "0.0"))
+    float TraceHeight = 1000.f;
+
+    /** Profondeur en dessous jusqu’où descend le trace */
+    UPROPERTY(EditAnywhere, Category = "Hex|Trace", meta = (ClampMin = "0.0"))
+    float TraceDepth = 1000.f;
+
+    /** Trace complexe (comme dans ton ancienne version) */
+    UPROPERTY(EditAnywhere, Category = "Hex|Trace")
+    bool bTraceComplex = true;
+
+    /** Debug du trace (ligne + point d’impact) */
+    UPROPERTY(EditAnywhere, Category = "Hex|Trace")
+    bool bDebugTrace = true;
+
+private:
+    // --- Impl interne ---
+
+    /** Calcule la position finale (X,Y,Z) d’une tuile (Q,R) :
+     *  - XY selon le layout (XSpacingFactor/YSpacingFactor + offset demi-ligne configurable)
+     *  - Z par line trace (ECC_Visibility) + fallback Static/Dynamic + TileZOffset
+     */
+    FVector ComputeTileSpawnPosition(int32 Q, int32 R) const;
+
+private:
+    /** Map interne Q,R → Actor de tuile */
     UPROPERTY()
-    UHexGridManager* GridManager;
+    TMap<FHexAxialCoordinates, AHexTile *> TilesMap;
 };

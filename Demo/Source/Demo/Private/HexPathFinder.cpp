@@ -1,121 +1,113 @@
-#include "HexPathfinder.h"
+#include "HexPathFinder.h"
 #include "HexGridManager.h"
+#include "Containers/Set.h"
+#include "Containers/Map.h"
+#include "Engine/World.h"
 
-UHexPathfinder::UHexPathfinder()
+UHexPathFinder::UHexPathFinder()
 {
+    PrimaryComponentTick.bCanEverTick = false;
 }
 
-void UHexPathfinder::Initialize(UHexGridManager* InGridManager)
+void UHexPathFinder::BeginPlay()
 {
-    GridManager = InGridManager;
+    Super::BeginPlay();
+
+    // Trouve automatiquement le composant UHexGridManager sur le même acteur
+    GridManager = GetOwner()->FindComponentByClass<UHexGridManager>();
+    if (!GridManager)
+    {
+        UE_LOG(LogTemp, Error, TEXT("HexPathFinder : pas de UHexGridManager trouvé sur %s"), *GetOwner()->GetName());
+    }
 }
 
-TArray<FHexAxialCoordinates> UHexPathfinder::FindPath(const FHexAxialCoordinates& Start, const FHexAxialCoordinates& Goal)
+int32 UHexPathFinder::Heuristic(const FHexAxialCoordinates& A, const FHexAxialCoordinates& B) const
 {
-    UE_LOG(LogTemp, Warning, TEXT("FindPath - Start: (%d, %d), Goal: (%d, %d)"), Start.Q, Start.R, Goal.Q, Goal.R);
+    // On utilise la distance « hexagonale » fournie par votre struct
+    return A.DistanceTo(B);
+}
 
-    if (!IsValid(GridManager))
+TArray<FHexAxialCoordinates> UHexPathFinder::FindPath(const FHexAxialCoordinates& Start, const FHexAxialCoordinates& Goal) const
+{
+    if (!GridManager)
     {
-        return TArray<FHexAxialCoordinates>();
+        return {};
     }
 
-    if (Start == Goal)
-    {
-        return { Start };
-    }
-
-    if (!GridManager->GetHexTiles().Contains(Start))
-    {
-        UE_LOG(LogTemp, Error, TEXT("Start (%d, %d) NOT in HexTiles!"), Start.Q, Start.R);
-    }
-    if (!GridManager->GetHexTiles().Contains(Goal))
-    {
-        UE_LOG(LogTemp, Error, TEXT("Goal (%d, %d) NOT in HexTiles!"), Goal.Q, Goal.R);
-    }
-
-    // A* Algorithm
-    TArray<FHexAxialCoordinates> OpenSet;
+    // A* : ensembles ouverts/fermés
     TSet<FHexAxialCoordinates> ClosedSet;
-    TMap<FHexAxialCoordinates, float> GScore;
-    TMap<FHexAxialCoordinates, float> FScore;
-    TMap<FHexAxialCoordinates, FHexAxialCoordinates> CameFrom;
-
+    TSet<FHexAxialCoordinates> OpenSet;
     OpenSet.Add(Start);
-    GScore.Add(Start, 0.0f);
-    FScore.Add(Start, CalculateHeuristic(Start, Goal));
+
+    // Scores g (coût depuis Start) et f = g + heuristique
+    TMap<FHexAxialCoordinates, int32> GScore;
+    GScore.Add(Start, 0);
+
+    TMap<FHexAxialCoordinates, int32> FScore;
+    FScore.Add(Start, Heuristic(Start, Goal));
+
+    // Pour reconstruire le chemin
+    TMap<FHexAxialCoordinates, FHexAxialCoordinates> CameFrom;
 
     while (OpenSet.Num() > 0)
     {
-        // Trouve le nœud avec le plus petit FScore
-        int32 CurrentIndex = 0;
-        for (int32 i = 1; i < OpenSet.Num(); i++)
+        // 1) Prendre node de OpenSet avec f le plus petit
+        FHexAxialCoordinates Current;
+        int32 BestF = TNumericLimits<int32>::Max();
+        for (const auto& Coord : OpenSet)
         {
-            if (FScore[OpenSet[i]] < FScore[OpenSet[CurrentIndex]])
+            int32 Score = FScore.Contains(Coord) ? FScore[Coord] : TNumericLimits<int32>::Max();
+            if (Score < BestF)
             {
-                CurrentIndex = i;
+                BestF = Score;
+                Current = Coord;
             }
         }
 
-        FHexAxialCoordinates Current = OpenSet[CurrentIndex];
-
+        // 2) Si c'est l'objectif, on reconstruit le chemin
         if (Current == Goal)
         {
-            return ReconstructPath(Goal, CameFrom);
+            TArray<FHexAxialCoordinates> Path;
+            FHexAxialCoordinates Node = Goal;
+            while (CameFrom.Contains(Node))
+            {
+                Path.Insert(Node, 0);
+                Node = CameFrom[Node];
+            }
+            Path.Insert(Start, 0);
+            return Path;
         }
 
-        OpenSet.RemoveAt(CurrentIndex);
+        // 3) Déplacer Current de OpenSet vers ClosedSet
+        OpenSet.Remove(Current);
         ClosedSet.Add(Current);
 
-        TArray<FHexAxialCoordinates> Neighbors = GridManager->GetNeighbors(Current);
-        for (const FHexAxialCoordinates& Neighbor : Neighbors)
+        // 4) Explorer les voisins
+        for (const auto& Neighbor : GridManager->GetNeighbors(Current))
         {
             if (ClosedSet.Contains(Neighbor))
             {
                 continue;
             }
 
-            float TentativeGScore = GScore[Current] + 1.0f; // Coût uniforme pour l'instant
+            const int32 TentativeG = GScore[Current] + Heuristic(Current, Neighbor);
 
             if (!OpenSet.Contains(Neighbor))
             {
                 OpenSet.Add(Neighbor);
             }
-            else if (TentativeGScore >= GScore.FindRef(Neighbor))
+            else if (TentativeG >= (GScore.Contains(Neighbor) ? GScore[Neighbor] : TNumericLimits<int32>::Max()))
             {
                 continue;
             }
 
+            // On a trouvé un meilleur chemin jusqu'à Neighbor
             CameFrom.Add(Neighbor, Current);
-            GScore.Add(Neighbor, TentativeGScore);
-            FScore.Add(Neighbor, TentativeGScore + CalculateHeuristic(Neighbor, Goal));
+            GScore.Add(Neighbor, TentativeG);
+            FScore.Add(Neighbor, TentativeG + Heuristic(Neighbor, Goal));
         }
     }
 
-    return TArray<FHexAxialCoordinates>(); // Aucun chemin trouvé
-}
-
-float UHexPathfinder::CalculateHeuristic(const FHexAxialCoordinates& Start, const FHexAxialCoordinates& Goal) const
-{
-    return Start.DistanceTo(Goal);
-}
-
-TArray<FHexAxialCoordinates> UHexPathfinder::ReconstructPath(const FHexAxialCoordinates& Goal, const TMap<FHexAxialCoordinates, FHexAxialCoordinates>& CameFrom)
-{
-    TArray<FHexAxialCoordinates> Path;
-    FHexAxialCoordinates Current = Goal;
-
-    Path.Add(Current);
-
-    while (CameFrom.Contains(Current))
-    {
-        Current = CameFrom[Current];
-        Path.Insert(Current, 0);
-    }
-
-    return Path;
-}
-
-void UHexPathfinder::SetGridManager(UHexGridManager* InGridManager)
-{
-    GridManager = InGridManager;
+    // Aucune solution
+    return {};
 }

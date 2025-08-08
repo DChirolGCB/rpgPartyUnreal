@@ -1,32 +1,37 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/NoExportTypes.h"
-#include "HexCoordinates.h"
-#include "HexPathfinder.generated.h"
+#include "Components/ActorComponent.h"
+#include "HexCoordinates.h"            // votre struct FHexAxialCoordinates + DistanceTo()
+#include "HexPathFinder.generated.h"
 
-UCLASS(BlueprintType)
-class DEMO_API UHexPathfinder : public UObject
+class UHexGridManager;
+
+/**
+ * Composant A* pour trouver un chemin sur la grille hexagonale.
+ */
+UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
+class DEMO_API UHexPathFinder : public UActorComponent
 {
     GENERATED_BODY()
 
 public:
-    UHexPathfinder();
+    UHexPathFinder();
 
-public:
+    /** 
+     * Retourne la liste des coordonnées (axiales) formant le chemin de Start à Goal.
+     * Si aucun chemin, renvoie un TArray vide.
+     */
+    TArray<FHexAxialCoordinates> FindPath(const FHexAxialCoordinates& Start, const FHexAxialCoordinates& Goal) const;
 
-    void SetGridManager(UHexGridManager* InGridManager);
-
-    UFUNCTION(BlueprintCallable, Category = "Pathfinding")
-    void Initialize(UHexGridManager* InGridManager);
-    
-    UFUNCTION(BlueprintCallable, Category = "Pathfinding")
-    TArray<FHexAxialCoordinates> FindPath(const FHexAxialCoordinates& Start, const FHexAxialCoordinates& Goal);
+protected:
+    virtual void BeginPlay() override;
 
 private:
-    float CalculateHeuristic(const FHexAxialCoordinates& Start, const FHexAxialCoordinates& Goal) const;
-    TArray<FHexAxialCoordinates> ReconstructPath(const FHexAxialCoordinates& Goal, const TMap<FHexAxialCoordinates, FHexAxialCoordinates>& CameFrom);
-    
+    /** Référence vers le gestionnaire de grille */
     UPROPERTY()
     UHexGridManager* GridManager;
+
+    /** Heuristique (distance hexagonale) */
+    int32 Heuristic(const FHexAxialCoordinates& A, const FHexAxialCoordinates& B) const;
 };

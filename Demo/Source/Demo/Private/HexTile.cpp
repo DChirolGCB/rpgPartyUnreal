@@ -1,45 +1,45 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
-
 #include "HexTile.h"
+#include "DemoGameMode.h"
+#include "Kismet/GameplayStatics.h"
+#include "Components/StaticMeshComponent.h"
 
-// Sets default values
 AHexTile::AHexTile()
 {
- 	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
-	PrimaryActorTick.bCanEverTick = true;
+    RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
+    TileMesh      = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("TileMesh"));
+    TileMesh->SetupAttachment(RootComponent);
 
-	RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("RootComponent"));
-
-	TileMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("TileMesh"));
-	TileMesh->SetupAttachment(RootComponent);
+    // Collision impérative pour les clics
+    TileMesh->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+    TileMesh->SetCollisionResponseToAllChannels(ECR_Block);
+    SetActorEnableCollision(true);
 }
 
-// Called when the game starts or when spawned
-void AHexTile::BeginPlay()
+void AHexTile::PostInitializeComponents()
 {
-	Super::BeginPlay();
-	
+    Super::PostInitializeComponents();
+    OnClicked.AddDynamic(this, &AHexTile::HandleOnClicked);
 }
 
-// Called every frame
-void AHexTile::Tick(float DeltaTime)
+void AHexTile::HandleOnClicked(AActor* TouchedActor, FKey ButtonPressed)
 {
-	Super::Tick(DeltaTime);
-
+    if (ADemoGameMode* GM = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(this)))
+    {
+        GM->HandleTileClicked(this);
+    }
 }
 
-void AHexTile::SetGridManager(UHexGridManager* InManager)
+void AHexTile::SetAxialCoordinates(const FHexAxialCoordinates& Coordinates)
 {
-    GridManager = InManager;
+    AxialCoordinates = Coordinates;
 }
 
-void AHexTile::SetCoordinates(FHexAxialCoordinates InCoords)
+void AHexTile::OnConstruction(const FTransform& Transform)
 {
-    AxialCoords = InCoords;
-}
-
-FHexAxialCoordinates AHexTile::GetAxialCoordinates() const
-{
-    return AxialCoords;
+    Super::OnConstruction(Transform);
+    if (TileMesh)
+    {
+        // Lève légèrement le mesh pour éviter la coplanarité avec le floor
+        TileMesh->SetRelativeLocation(FVector(0.f, 0.f, VisualZOffset));
+    }
 }
