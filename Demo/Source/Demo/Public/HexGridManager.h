@@ -1,11 +1,11 @@
-// HexGridManager.h
-#pragma once
 
+#pragma once
 #include "CoreMinimal.h"
-#include "Components/ActorComponent.h"
-#include "HexTile.h"
 #include "HexCoordinates.h"
 #include "HexGridManager.generated.h"
+
+
+class AHexTile;
 
 /**
  * Gère la génération et l'indexation d'une grille hexagonale (axial Q,R).
@@ -39,8 +39,25 @@ public:
     /** Accès lecture à la map des tuiles (utile pour pathfinding etc.) */
     const TMap<FHexAxialCoordinates, AHexTile *> &GetHexTiles() const { return TilesMap; }
 
-public:
-    // --- Layout éditable (pour recaler exactement ton ancien rendu) ---
+
+    // Cache de voisins calculés en XY (réels)
+    TMap<FHexAxialCoordinates, TArray<FHexAxialCoordinates>> WorldNeighbors;
+
+    // Recalcule le cache (à appeler après la génération des tuiles)
+    UFUNCTION(BlueprintCallable, Category = "Hex|Grid")
+    void BuildWorldNeighbors();
+
+    // Récupère les voisins depuis le cache
+    UFUNCTION(BlueprintPure, Category = "Hex|Grid")
+    void GetNeighborsByWorld(const FHexAxialCoordinates &From, TArray<FHexAxialCoordinates> &Out) const;
+
+    /** Si le premier hit est un acteur ‘Floor’, on ne crée PAS la tuile */
+    UPROPERTY(EditAnywhere, Category = "Hex|Trace")
+    bool bSkipTilesOverFloor = true;
+
+    /** Nom/Tag de l’océan */
+    UPROPERTY(EditAnywhere, Category = "Hex|Trace")
+    FName FloorTag = "Floor";
 
     // Layout défauts (tes “bonnes valeurs”)
     UPROPERTY(EditAnywhere, Category = "Hex|Layout", meta = (ClampMin = "1.0"))
@@ -79,9 +96,6 @@ public:
     UFUNCTION(BlueprintCallable, CallInEditor, Category = "Hex|Generation")
     void RebuildGrid();
 
-public:
-    // --- Trace / Z ---
-
     /** Hauteur au-dessus d’où commence le trace */
     UPROPERTY(EditAnywhere, Category = "Hex|Trace", meta = (ClampMin = "0.0"))
     float TraceHeight = 1000.f;
@@ -99,15 +113,14 @@ public:
     bool bDebugTrace = true;
 
 private:
-    // --- Impl interne ---
-
     /** Calcule la position finale (X,Y,Z) d’une tuile (Q,R) :
      *  - XY selon le layout (XSpacingFactor/YSpacingFactor + offset demi-ligne configurable)
      *  - Z par line trace (ECC_Visibility) + fallback Static/Dynamic + TileZOffset
      */
     FVector ComputeTileSpawnPosition(int32 Q, int32 R) const;
 
-private:
+    bool TryComputeTileSpawnPosition(int32 Q, int32 R, FVector& OutLocation) const;
+
     /** Map interne Q,R → Actor de tuile */
     UPROPERTY()
     TMap<FHexAxialCoordinates, AHexTile *> TilesMap;

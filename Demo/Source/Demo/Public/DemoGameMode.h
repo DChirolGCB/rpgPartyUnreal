@@ -6,10 +6,12 @@
 #include "HexTile.h"
 #include "HexPawn.h"
 #include "HexGridManager.h"
-#include "HexPathFinder.h"    // <— corriger le nom du header
-
+#include "HexPathFinder.h"
 #include "DemoGameMode.generated.h"
 
+/**
+ * GameMode central : possède GridManager + PathFinder, gère le click-to-move.
+ */
 UCLASS()
 class DEMO_API ADemoGameMode : public AGameModeBase
 {
@@ -18,25 +20,33 @@ class DEMO_API ADemoGameMode : public AGameModeBase
 public:
     ADemoGameMode();
 
+    /** Appelé par AHexTile::HandleOnClicked */
+    UFUNCTION(BlueprintCallable, Category="Hex|Input")
+    void HandleTileClicked(class AHexTile* ClickedTile);
+
+    // Getters propres (utilisés par du code existant)
+    UFUNCTION(BlueprintPure, Category="Hex")
     UHexGridManager* GetHexGridManager() const { return GridManager; }
 
-    void HandleTileClicked(AHexTile* ClickedTile);
+    UFUNCTION(BlueprintPure, Category="Hex")
+    UHexPathFinder*  GetHexPathFinder() const { return PathFinder; }
 
 protected:
     virtual void BeginPlay() override;
 
     void InitializePawnStartTile(const FHexAxialCoordinates& StartCoords);
 
+    // --- Params de génération ---
     UPROPERTY(EditDefaultsOnly, Category="Hex")
     TSubclassOf<AHexTile> HexTileClass;
 
     UPROPERTY(EditDefaultsOnly, Category="Hex")
     int32 GridRadius = 10;
 
+    // --- Components possédés par le GameMode ---
     UPROPERTY()
     UHexGridManager* GridManager;
 
     UPROPERTY()
     UHexPathFinder* PathFinder;
-
 };

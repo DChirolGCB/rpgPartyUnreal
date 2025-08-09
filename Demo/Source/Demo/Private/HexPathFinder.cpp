@@ -1,113 +1,144 @@
 #include "HexPathFinder.h"
 #include "HexGridManager.h"
-#include "Containers/Set.h"
-#include "Containers/Map.h"
-#include "Engine/World.h"
+#include "DemoGameMode.h"
+#include "Kismet/GameplayStatics.h"
+#include "Algo/Reverse.h"
 
 UHexPathFinder::UHexPathFinder()
 {
     PrimaryComponentTick.bCanEverTick = false;
 }
 
-void UHexPathFinder::BeginPlay()
-{
-    Super::BeginPlay();
+static const FHexAxialCoordinates GHexDirs[6] = {
+    {+2,  0}, {+1, -1}, {-1, -1},
+    {-2,  0}, {-1, +1}, {+1, +1}
+};
 
-    // Trouve automatiquement le composant UHexGridManager sur le même acteur
-    GridManager = GetOwner()->FindComponentByClass<UHexGridManager>();
-    if (!GridManager)
-    {
-        UE_LOG(LogTemp, Error, TEXT("HexPathFinder : pas de UHexGridManager trouvé sur %s"), *GetOwner()->GetName());
-    }
+int32 UHexPathFinder::HexDistance(const FHexAxialCoordinates& A, const FHexAxialCoordinates& B)
+{
+    const int32 dq = A.Q - B.Q;
+    const int32 dr = A.R - B.R;
+    const int32 ds = (-(A.Q + A.R)) - (-(B.Q + B.R)); // s = -q - r
+    return (FMath::Abs(dq) + FMath::Abs(dr) + FMath::Abs(ds)) / 2;
 }
 
-int32 UHexPathFinder::Heuristic(const FHexAxialCoordinates& A, const FHexAxialCoordinates& B) const
+void UHexPathFinder::GetValidNeighbors(UHexGridManager* Grid,
+                                       const FHexAxialCoordinates& From,
+                                       TArray<FHexAxialCoordinates>& OutNeighbors) const
 {
-    // On utilise la distance « hexagonale » fournie par votre struct
-    return A.DistanceTo(B);
+    OutNeighbors.Reset();
+    if (!Grid) return;
+
+    // Utilise l'adjacence axiale standard, limitée aux tuiles réellement présentes
+    OutNeighbors = Grid->GetNeighbors(From);
 }
 
-TArray<FHexAxialCoordinates> UHexPathFinder::FindPath(const FHexAxialCoordinates& Start, const FHexAxialCoordinates& Goal) const
+
+void UHexPathFinder::ReconstructPath(const TMap<FHexAxialCoordinates, FHexAxialCoordinates>& Parent,
+                                     const FHexAxialCoordinates& Start,
+                                     const FHexAxialCoordinates& Goal,
+                                     TArray<FHexAxialCoordinates>& OutPath)
 {
-    if (!GridManager)
+    OutPath.Reset();
+    FHexAxialCoordinates Cur = Goal;
+    OutPath.Add(Cur);
+
+    while (!(Cur == Start))
     {
-        return {};
+        const FHexAxialCoordinates* Prev = Parent.Find(Cur);
+        if (!Prev) { OutPath.Reset(); return; } // pas de chemin
+        Cur = *Prev;
+        OutPath.Add(Cur);
     }
 
-    // A* : ensembles ouverts/fermés
-    TSet<FHexAxialCoordinates> ClosedSet;
-    TSet<FHexAxialCoordinates> OpenSet;
-    OpenSet.Add(Start);
+    Algo::Reverse(OutPath);
+}
 
-    // Scores g (coût depuis Start) et f = g + heuristique
+TArray<FHexAxialCoordinates> UHexPathFinder::FindPath(const FHexAxialCoordinates& Start,
+                                                      const FHexAxialCoordinates& Goal)
+{
+    TArray<FHexAxialCoordinates> Empty;
+
+    UWorld* World = GetWorld();
+    if (!World) return Empty;
+
+    ADemoGameMode* GM = World->GetAuthGameMode<ADemoGameMode>();
+    if (!GM) return Empty;
+
+    UHexGridManager* Grid = GM->GetHexGridManager();
+    if (!Grid) return Empty;
+
+    if (Start == Goal)
+    {
+        TArray<FHexAxialCoordinates> P; P.Add(Start);
+        return P;
+    }
+
+    // A*
+    TSet<FHexAxialCoordinates> Open;
+    TSet<FHexAxialCoordinates> Closed;
+    TMap<FHexAxialCoordinates, FHexAxialCoordinates> Parent;
     TMap<FHexAxialCoordinates, int32> GScore;
-    GScore.Add(Start, 0);
-
     TMap<FHexAxialCoordinates, int32> FScore;
-    FScore.Add(Start, Heuristic(Start, Goal));
 
-    // Pour reconstruire le chemin
-    TMap<FHexAxialCoordinates, FHexAxialCoordinates> CameFrom;
+    Open.Add(Start);
+    GScore.Add(Start, 0);
+    FScore.Add(Start, HexDistance(Start, Goal));
 
-    while (OpenSet.Num() > 0)
+    TArray<FHexAxialCoordinates> Neigh;
+
+    while (Open.Num() > 0)
     {
-        // 1) Prendre node de OpenSet avec f le plus petit
-        FHexAxialCoordinates Current;
-        int32 BestF = TNumericLimits<int32>::Max();
-        for (const auto& Coord : OpenSet)
+        // Cherche le node de Open avec le plus petit F
+        FHexAxialCoordinates Current = *Open.CreateIterator();
+        int32 BestF = FScore.FindRef(Current);
+        for (const FHexAxialCoordinates& N : Open)
         {
-            int32 Score = FScore.Contains(Coord) ? FScore[Coord] : TNumericLimits<int32>::Max();
-            if (Score < BestF)
+            const int32 F = FScore.FindRef(N);
+            if (F < BestF)
             {
-                BestF = Score;
-                Current = Coord;
+                BestF = F;
+                Current = N;
             }
         }
 
-        // 2) Si c'est l'objectif, on reconstruit le chemin
         if (Current == Goal)
         {
             TArray<FHexAxialCoordinates> Path;
-            FHexAxialCoordinates Node = Goal;
-            while (CameFrom.Contains(Node))
-            {
-                Path.Insert(Node, 0);
-                Node = CameFrom[Node];
-            }
-            Path.Insert(Start, 0);
+            ReconstructPath(Parent, Start, Goal, Path);
             return Path;
         }
 
-        // 3) Déplacer Current de OpenSet vers ClosedSet
-        OpenSet.Remove(Current);
-        ClosedSet.Add(Current);
+        Open.Remove(Current);
+        Closed.Add(Current);
 
-        // 4) Explorer les voisins
-        for (const auto& Neighbor : GridManager->GetNeighbors(Current))
+        GetValidNeighbors(Grid, Current, Neigh);
+        for (const FHexAxialCoordinates& N : Neigh)
         {
-            if (ClosedSet.Contains(Neighbor))
+            if (Closed.Contains(N)) continue;
+
+            const int32 TentativeG = GScore.FindRef(Current) + 1; // coût uniforme par step
+
+            bool bIsBetter = false;
+            if (!Open.Contains(N))
             {
-                continue;
+                Open.Add(N);
+                bIsBetter = true;
+            }
+            else if (TentativeG < GScore.FindRef(N))
+            {
+                bIsBetter = true;
             }
 
-            const int32 TentativeG = GScore[Current] + Heuristic(Current, Neighbor);
-
-            if (!OpenSet.Contains(Neighbor))
+            if (bIsBetter)
             {
-                OpenSet.Add(Neighbor);
+                Parent.Add(N, Current);
+                GScore.Add(N, TentativeG);
+                FScore.Add(N, TentativeG + HexDistance(N, Goal));
             }
-            else if (TentativeG >= (GScore.Contains(Neighbor) ? GScore[Neighbor] : TNumericLimits<int32>::Max()))
-            {
-                continue;
-            }
-
-            // On a trouvé un meilleur chemin jusqu'à Neighbor
-            CameFrom.Add(Neighbor, Current);
-            GScore.Add(Neighbor, TentativeG);
-            FScore.Add(Neighbor, TentativeG + Heuristic(Neighbor, Goal));
         }
     }
 
-    // Aucune solution
-    return {};
+    // Pas de chemin
+    return Empty;
 }

@@ -2,15 +2,16 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "HexCoordinates.h"            // votre struct FHexAxialCoordinates + DistanceTo()
+#include "HexCoordinates.h"
 #include "HexPathFinder.generated.h"
 
 class UHexGridManager;
 
 /**
- * Composant A* pour trouver un chemin sur la grille hexagonale.
+ * A* sur coordonnées axiales standard.
+ * Ne considère comme voisins que les 6 directions axiales ET uniquement les tuiles réellement présentes.
  */
-UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
+UCLASS(ClassGroup=(Hex), meta=(BlueprintSpawnableComponent))
 class DEMO_API UHexPathFinder : public UActorComponent
 {
     GENERATED_BODY()
@@ -18,20 +19,23 @@ class DEMO_API UHexPathFinder : public UActorComponent
 public:
     UHexPathFinder();
 
-    /** 
-     * Retourne la liste des coordonnées (axiales) formant le chemin de Start à Goal.
-     * Si aucun chemin, renvoie un TArray vide.
-     */
-    TArray<FHexAxialCoordinates> FindPath(const FHexAxialCoordinates& Start, const FHexAxialCoordinates& Goal) const;
-
-protected:
-    virtual void BeginPlay() override;
+    /** Trouve un chemin Start -> Goal (incluant les deux) ; vide si impossible. */
+    UFUNCTION(BlueprintCallable, Category="Hex|Path")
+    TArray<FHexAxialCoordinates> FindPath(const FHexAxialCoordinates& Start,
+                                          const FHexAxialCoordinates& Goal);
 
 private:
-    /** Référence vers le gestionnaire de grille */
-    UPROPERTY()
-    UHexGridManager* GridManager;
+    /** Renvoie les voisins axiaux standard existants dans la grille. */
+    void GetValidNeighbors(UHexGridManager* Grid,
+                           const FHexAxialCoordinates& From,
+                           TArray<FHexAxialCoordinates>& OutNeighbors) const;
 
-    /** Heuristique (distance hexagonale) */
-    int32 Heuristic(const FHexAxialCoordinates& A, const FHexAxialCoordinates& B) const;
+    /** Distance hex (axial) */
+    static int32 HexDistance(const FHexAxialCoordinates& A, const FHexAxialCoordinates& B);
+
+    /** Remonte le chemin depuis Goal via Parent */
+    static void ReconstructPath(const TMap<FHexAxialCoordinates, FHexAxialCoordinates>& Parent,
+                                const FHexAxialCoordinates& Start,
+                                const FHexAxialCoordinates& Goal,
+                                TArray<FHexAxialCoordinates>& OutPath);
 };

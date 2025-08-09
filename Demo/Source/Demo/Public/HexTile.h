@@ -2,8 +2,12 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "HexCoordinates.h" // Votre struct FHexAxialCoordinates + GetTypeHash
+#include "HexCoordinates.h"        // FHexAxialCoordinates
+#include "InputCoreTypes.h"        // FKey
 #include "HexTile.generated.h"
+
+class USceneComponent;
+class UStaticMeshComponent;
 
 UCLASS()
 class DEMO_API AHexTile : public AActor
@@ -13,30 +17,24 @@ class DEMO_API AHexTile : public AActor
 public:
     AHexTile();
 
-    /** Définit les coordonnées axiales de cette tuile */
-    UFUNCTION(BlueprintCallable, Category = "Hex")
-    void SetAxialCoordinates(const FHexAxialCoordinates &Coordinates);
+    UFUNCTION(BlueprintCallable, Category="Hex")
+    void SetAxialCoordinates(const FHexAxialCoordinates& In) { Axial = In; }
 
-    /** Retourne les coordonnées axiales */
-    UFUNCTION(BlueprintCallable, Category = "Hex")
-    FHexAxialCoordinates GetAxialCoordinates() const { return AxialCoordinates; }
-
-    UPROPERTY(EditAnywhere, Category = "Hex|Visual", meta = (ClampMin = "0.0", UIMin = "0.0"))
-    float VisualZOffset = 1.0f; // 0.5 à 2.0 marche bien selon tes meshes
+    UFUNCTION(BlueprintCallable, Category="Hex")
+    const FHexAxialCoordinates& GetAxialCoordinates() const { return Axial; }
 
 protected:
-    /** Coordonnées axiales stockées */
-    UPROPERTY(VisibleAnywhere, Category = "Hex")
-    FHexAxialCoordinates AxialCoordinates;
-
-    /** Maillage de la tuile */
-    UPROPERTY(VisibleAnywhere, Category = "Hex")
-    UStaticMeshComponent *TileMesh;
-
     virtual void PostInitializeComponents() override;
 
-    /** Handler C++ du clic, lié à OnClicked de l’acteur */
     UFUNCTION()
-    void HandleOnClicked(AActor *TouchedActor, FKey ButtonPressed);
-    virtual void OnConstruction(const FTransform &Transform) override;
+    void HandleOnClicked(AActor* TouchedActor, FKey ButtonPressed);
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Hex|Comp")
+    TObjectPtr<USceneComponent> SceneRoot;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Hex|Comp")
+    TObjectPtr<UStaticMeshComponent> TileMesh;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Hex|Data", meta=(DisplayName="Axial Coordinates"))
+    FHexAxialCoordinates Axial;
 };

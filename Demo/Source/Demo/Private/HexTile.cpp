@@ -1,18 +1,19 @@
 #include "HexTile.h"
-#include "DemoGameMode.h"
-#include "Kismet/GameplayStatics.h"
+#include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Kismet/GameplayStatics.h"
+#include "DemoGameMode.h"
 
 AHexTile::AHexTile()
 {
-    RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
-    TileMesh      = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("TileMesh"));
-    TileMesh->SetupAttachment(RootComponent);
+    SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
+    RootComponent = SceneRoot;
 
-    // Collision impérative pour les clics
-    TileMesh->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-    TileMesh->SetCollisionResponseToAllChannels(ECR_Block);
-    SetActorEnableCollision(true);
+    TileMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("TileMesh"));
+    TileMesh->SetupAttachment(SceneRoot);
+
+    // Pas de label, pas de rotation, juste une tuile cliquable
+    SetActorTickEnabled(false);
 }
 
 void AHexTile::PostInitializeComponents()
@@ -26,20 +27,5 @@ void AHexTile::HandleOnClicked(AActor* TouchedActor, FKey ButtonPressed)
     if (ADemoGameMode* GM = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(this)))
     {
         GM->HandleTileClicked(this);
-    }
-}
-
-void AHexTile::SetAxialCoordinates(const FHexAxialCoordinates& Coordinates)
-{
-    AxialCoordinates = Coordinates;
-}
-
-void AHexTile::OnConstruction(const FTransform& Transform)
-{
-    Super::OnConstruction(Transform);
-    if (TileMesh)
-    {
-        // Lève légèrement le mesh pour éviter la coplanarité avec le floor
-        TileMesh->SetRelativeLocation(FVector(0.f, 0.f, VisualZOffset));
     }
 }
