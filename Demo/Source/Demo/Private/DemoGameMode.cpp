@@ -8,14 +8,7 @@
 
 namespace HexBridge
 {
-    // 6 directions axiales standard
-    static const FHexAxialCoordinates AxialDirs[6] = {
-    {+2,  0}, {+1, -1}, {-1, -1},
-    {-2,  0}, {-1, +1}, {+1, +1}
-};
-
-
-    // BFS qui ne dépend pas de GetNeighbors ; on ne traverse que des tuiles existantes
+    // BFS basé sur les voisins fournis par la grille (axial standard et tuiles existantes)
     static bool BuildBridge(UHexGridManager *GM,
                             const FHexAxialCoordinates &From,
                             const FHexAxialCoordinates &To,
@@ -39,14 +32,12 @@ namespace HexBridge
         FHexAxialCoordinates Cur;
         while (Open.Dequeue(Cur))
         {
-            for (const FHexAxialCoordinates &D : AxialDirs)
+            TArray<FHexAxialCoordinates> Neigh = GM->GetNeighbors(Cur);
+            for (const FHexAxialCoordinates &N : Neigh)
             {
-                const FHexAxialCoordinates N{Cur.Q + D.Q, Cur.R + D.R};
                 if (Parent.Contains(N))
                     continue;
-                if (!GM->GetHexTileAt(N))
-                    continue; // n’accepte que les tuiles qui existent
-
+                // N existe garanti par GetNeighbors
                 Parent.Add(N, Cur);
                 if (N == To)
                 {
@@ -89,17 +80,8 @@ namespace HexBridge
             const FHexAxialCoordinates From = Out.Last();
             const FHexAxialCoordinates To = Path[i];
 
-            // Déjà voisins (axial standard) ?
-            bool bAdjacent = false;
-            for (const auto &D : AxialDirs)
-            {
-                if (From.Q + D.Q == To.Q && From.R + D.R == To.R)
-                {
-                    bAdjacent = true;
-                    break;
-                }
-            }
-
+            // Déjà voisins selon la grille ?
+            const bool bAdjacent = GM->GetNeighbors(From).Contains(To);
             if (bAdjacent)
             {
                 Out.Add(To);
@@ -114,9 +96,10 @@ namespace HexBridge
             }
             else
             {
-                UE_LOG(LogTemp, Warning, TEXT("[Bridge] Impossible de relier (%d,%d)->(%d,%d) par voisins existants"),
+                UE_LOG(LogTemp, Warning, TEXT("[Bridge] Impossible de relier (%d,%d)->(%d,%d) par voisins existants — on ignore ce saut"),
                        From.Q, From.R, To.Q, To.R);
-                Out.Add(To);
+                // Ne pas ajouter To si non adjacent pour éviter des sauts impossibles
+                // On garde Out comme tel et on continue (option: casser complètement)
             }
         }
 
@@ -126,16 +109,20 @@ namespace HexBridge
 
 namespace Hex
 {
+    // Doubled-Q neighbor set to match GridManager when bUseDoubledQForLabels = true
     static const FHexAxialCoordinates NeighborDirs[6] =
         {
-            {+1, 0}, {+1, -1}, {0, -1}, {-1, 0}, {-1, +1}, {0, +1}};
+            {+2, 0}, {+1, -1}, {-1, -1}, {-2, 0}, {-1, +1}, {+1, +1}};
 
     static int32 HexDistance(const FHexAxialCoordinates &A, const FHexAxialCoordinates &B)
     {
-        const int32 dq = A.Q - B.Q;
-        const int32 dr = A.R - B.R;
-        const int32 ds = (-A.Q - A.R) - (-B.Q - B.R);
-        return (FMath::Abs(dq) + FMath::Abs(dr) + FMath::Abs(ds)) / 2;
+        // For doubled-q neighbors
+        const int32 dq = FMath::Abs(A.Q - B.Q);
+        const int32 dr = FMath::Abs(A.R - B.R);
+        const int32 diag = FMath::Min(dq / 2, dr);
+        const int32 remQ = dq - diag * 2;
+        const int32 remR = dr - diag;
+        return diag + remR + remQ / 2;
     }
 
     static bool AreNeighbors(const FHexAxialCoordinates &A, const FHexAxialCoordinates &B)
@@ -235,6 +222,7 @@ void ADemoGameMode::BeginPlay()
 {
     Super::BeginPlay();
 
+    PathView = GetWorld()->SpawnActor<APathView>();
     if (!ensure(GridManager))
     {
         UE_LOG(LogTemp, Error, TEXT("DemoGameMode BeginPlay: GridManager is NULL, aborting grid gen"));
@@ -345,4 +333,31 @@ void ADemoGameMode::InitializePawnStartTile(const FHexAxialCoordinates &StartCoo
     {
         UE_LOG(LogTemp, Error, TEXT("InitializePawnStartTile : pawn non HexPawn"));
     }
+}
+
+void ADemoGameMode::ShowPlannedPathTo(AHexTile* GoalTile)
+{
+    if (!GridManager || !PathFinder || !GoalTile || !PathView) return;
+
+    // Start = tuile actuelle du pawn
+    AHexTile* StartTile = /* récupère ta tuile courante du pawn */ nullptr;
+    if (!StartTile) return;
+
+    const FHexAxialCoordinates Start = StartTile->GetAxialCoordinates();
+    const FHexAxialCoordinates Goal  = GoalTile->GetAxialCoordinates();
+
+    TArray<FHexAxialCoordinates> AxialPath = PathFinder->FindPath(Start, Goal);
+    if (AxialPath.Num() < 2) { PathView->Clear(); return; }
+
+    TArray<FVector> Points; Points.Reserve(AxialPath.Num());
+    for (const auto& C : AxialPath)
+        if (AHexTile* T = GridManager->GetHexTileAt(C))
+            Points.Add(T->GetActorLocation());
+
+    PathView->Show(Points);
+}
+
+void ADemoGameMode::ClearPlannedPath()
+{
+    if (PathView) PathView->Clear();
 }

@@ -59,7 +59,7 @@ public:
     UPROPERTY(EditAnywhere, Category = "Hex|Trace")
     FName FloorTag = "Floor";
 
-    // Layout défauts (tes “bonnes valeurs”)
+    // Layout défauts (tes “bonnes valeurs”) — inchangé (ne modifie que le placement monde)
     UPROPERTY(EditAnywhere, Category = "Hex|Layout", meta = (ClampMin = "1.0"))
     float TileSize = 250.f;
 
@@ -112,6 +112,10 @@ public:
     UPROPERTY(EditAnywhere, Category = "Hex|Trace")
     bool bDebugTrace = true;
 
+    /** Règle d'adjacence: si false, on interdit les voisins axiaux où Q et R changent simultanément (seulement 4 directions) */
+    UPROPERTY(EditAnywhere, Category = "Hex|Rules")
+    bool bAllowDiagonalAxialNeighbors = true;
+
 private:
     /** Calcule la position finale (X,Y,Z) d’une tuile (Q,R) :
      *  - XY selon le layout (XSpacingFactor/YSpacingFactor + offset demi-ligne configurable)
@@ -120,6 +124,27 @@ private:
     FVector ComputeTileSpawnPosition(int32 Q, int32 R) const;
 
     bool TryComputeTileSpawnPosition(int32 Q, int32 R, FVector& OutLocation) const;
+
+    /** Remap des indices génération -> coordonnées axiales attribuées (n'affecte pas la position monde) */
+    UPROPERTY(EditAnywhere, Category = "Hex|Coordinates")
+    bool bInvertRAxisForLabels = false;
+
+    UPROPERTY(EditAnywhere, Category = "Hex|Coordinates")
+    bool bInvertQAxisForLabels = false;
+
+    UPROPERTY(EditAnywhere, Category = "Hex|Coordinates")
+    bool bSwapQRForLabels = false;
+
+    /** Utiliser un repère "doubled-q" pour les coordonnées attribuées (voisins: (±2,0), (±1,±1)) */
+    UPROPERTY(EditAnywhere, Category = "Hex|Coordinates")
+    bool bUseDoubledQForLabels = false;
+
+    FHexAxialCoordinates MapSpawnIndexToAxial(int32 Q, int32 R) const;
+
+public:
+    /** Distance entre A et B selon la convention courante (doubled-q ou non) */
+    UFUNCTION(BlueprintPure, Category = "Hex|Query")
+    int32 AxialDistance(const FHexAxialCoordinates& A, const FHexAxialCoordinates& B) const;
 
     /** Map interne Q,R → Actor de tuile */
     UPROPERTY()

@@ -9,18 +9,11 @@ UHexPathFinder::UHexPathFinder()
     PrimaryComponentTick.bCanEverTick = false;
 }
 
+// Directions déjà adaptées à ton axial (q peut varier de 2)
 static const FHexAxialCoordinates GHexDirs[6] = {
     {+2,  0}, {+1, -1}, {-1, -1},
     {-2,  0}, {-1, +1}, {+1, +1}
 };
-
-int32 UHexPathFinder::HexDistance(const FHexAxialCoordinates& A, const FHexAxialCoordinates& B)
-{
-    const int32 dq = A.Q - B.Q;
-    const int32 dr = A.R - B.R;
-    const int32 ds = (-(A.Q + A.R)) - (-(B.Q + B.R)); // s = -q - r
-    return (FMath::Abs(dq) + FMath::Abs(dr) + FMath::Abs(ds)) / 2;
-}
 
 void UHexPathFinder::GetValidNeighbors(UHexGridManager* Grid,
                                        const FHexAxialCoordinates& From,
@@ -28,11 +21,8 @@ void UHexPathFinder::GetValidNeighbors(UHexGridManager* Grid,
 {
     OutNeighbors.Reset();
     if (!Grid) return;
-
-    // Utilise l'adjacence axiale standard, limitée aux tuiles réellement présentes
     OutNeighbors = Grid->GetNeighbors(From);
 }
-
 
 void UHexPathFinder::ReconstructPath(const TMap<FHexAxialCoordinates, FHexAxialCoordinates>& Parent,
                                      const FHexAxialCoordinates& Start,
@@ -46,11 +36,10 @@ void UHexPathFinder::ReconstructPath(const TMap<FHexAxialCoordinates, FHexAxialC
     while (!(Cur == Start))
     {
         const FHexAxialCoordinates* Prev = Parent.Find(Cur);
-        if (!Prev) { OutPath.Reset(); return; } // pas de chemin
+        if (!Prev) { OutPath.Reset(); return; }
         Cur = *Prev;
         OutPath.Add(Cur);
     }
-
     Algo::Reverse(OutPath);
 }
 
@@ -83,21 +72,25 @@ TArray<FHexAxialCoordinates> UHexPathFinder::FindPath(const FHexAxialCoordinates
 
     Open.Add(Start);
     GScore.Add(Start, 0);
-    FScore.Add(Start, HexDistance(Start, Goal));
+    FScore.Add(Start, Grid->AxialDistance(Start, Goal)); // heuristique admissible pour TON système
 
     TArray<FHexAxialCoordinates> Neigh;
 
     while (Open.Num() > 0)
     {
-        // Cherche le node de Open avec le plus petit F
+        // Sélection du node: min(F) puis tie-break sur G max (réduit les détours)
         FHexAxialCoordinates Current = *Open.CreateIterator();
-        int32 BestF = FScore.FindRef(Current);
+        int32 BestF = *FScore.Find(Current);
+        int32 BestG = *GScore.Find(Current);
+
         for (const FHexAxialCoordinates& N : Open)
         {
-            const int32 F = FScore.FindRef(N);
-            if (F < BestF)
+            const int32 FN = *FScore.Find(N);
+            const int32 GN = *GScore.Find(N);
+            if (FN < BestF || (FN == BestF && GN > BestG))
             {
-                BestF = F;
+                BestF = FN;
+                BestG = GN;
                 Current = N;
             }
         }
@@ -112,12 +105,19 @@ TArray<FHexAxialCoordinates> UHexPathFinder::FindPath(const FHexAxialCoordinates
         Open.Remove(Current);
         Closed.Add(Current);
 
+        Neigh.Reset();
         GetValidNeighbors(Grid, Current, Neigh);
+
+        // G courant doit exister
+        const int32* GcurPtr = GScore.Find(Current);
+        if (!GcurPtr) { continue; }
+        const int32 Gcur = *GcurPtr;
+
         for (const FHexAxialCoordinates& N : Neigh)
         {
             if (Closed.Contains(N)) continue;
 
-            const int32 TentativeG = GScore.FindRef(Current) + 1; // coût uniforme par step
+            const int32 TentativeG = Gcur + 1; // coût uniforme
 
             bool bIsBetter = false;
             if (!Open.Contains(N))
@@ -125,20 +125,21 @@ TArray<FHexAxialCoordinates> UHexPathFinder::FindPath(const FHexAxialCoordinates
                 Open.Add(N);
                 bIsBetter = true;
             }
-            else if (TentativeG < GScore.FindRef(N))
+            else
             {
-                bIsBetter = true;
+                if (const int32* Gold = GScore.Find(N))
+                    bIsBetter = TentativeG < *Gold;
+                else
+                    bIsBetter = true; // en Open sans G, on met à jour
             }
 
             if (bIsBetter)
             {
                 Parent.Add(N, Current);
                 GScore.Add(N, TentativeG);
-                FScore.Add(N, TentativeG + HexDistance(N, Goal));
+                FScore.Add(N, TentativeG + Grid->AxialDistance(N, Goal));
             }
         }
     }
-
-    // Pas de chemin
     return Empty;
 }

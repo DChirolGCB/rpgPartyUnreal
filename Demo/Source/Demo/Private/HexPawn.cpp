@@ -138,6 +138,17 @@ void AHexPawn::Tick(float DeltaTime)
 			// Adjacence stricte axiale (et tuile existante)
 			const TArray<FHexAxialCoordinates> Neigh = GridRef->GetNeighbors(Cur);
 			const bool bAdjacent = Neigh.Contains(Next);
+			// Debug: liste les voisins et la distance
+			{
+				FString NeighStr;
+				for (const auto &N : Neigh)
+				{
+					NeighStr += FString::Printf(TEXT(" (%d,%d)"), N.Q, N.R);
+				}
+				const int32 Dist = Cur.DistanceTo(Next);
+				UE_LOG(LogTemp, Verbose, TEXT("[Move] Check step %d: (%d,%d)->(%d,%d) | Dist=%d | Neigh:%s"),
+					   CurrentStepIndex, Cur.Q, Cur.R, Next.Q, Next.R, Dist, *NeighStr);
+			}
 			if (!bAdjacent || !GridRef->GetHexTileAt(Next))
 			{
 				UE_LOG(LogTemp, Warning, TEXT("[Move] Step non-voisin ou absent: (%d,%d)->(%d,%d). Stop."),

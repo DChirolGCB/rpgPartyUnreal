@@ -7,6 +7,7 @@
 #include "HexPawn.h"
 #include "HexGridManager.h"
 #include "HexPathFinder.h"
+#include "PathView.h"
 #include "DemoGameMode.generated.h"
 
 /**
@@ -31,6 +32,12 @@ public:
     UFUNCTION(BlueprintPure, Category="Hex")
     UHexPathFinder*  GetHexPathFinder() const { return PathFinder; }
 
+    UFUNCTION(BlueprintCallable, Category="Hex|Path")
+void ShowPlannedPathTo(AHexTile* GoalTile);
+
+UFUNCTION(BlueprintCallable, Category="Hex|Path")
+void ClearPlannedPath();
+
 protected:
     virtual void BeginPlay() override;
 
@@ -49,4 +56,6 @@ protected:
 
     UPROPERTY()
     UHexPathFinder* PathFinder;
+
+    UPROPERTY() APathView* PathView = nullptr;
 };
