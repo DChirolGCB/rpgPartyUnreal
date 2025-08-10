@@ -81,15 +81,21 @@ void AHexTile::HandleOnClicked(AActor *TouchedActor, FKey ButtonPressed)
 void AHexTile::HandleOnBeginCursorOver(AActor *TouchedActor)
 {
     SetHighlighted(true);
+
     if (ADemoGameMode *GM = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(this)))
-        GM->ShowPlannedPathTo(this);
+    {
+        GM->PreviewPathTo(this);
+    }
 }
 
 void AHexTile::HandleOnEndCursorOver(AActor *TouchedActor)
 {
     SetHighlighted(false);
+
     if (ADemoGameMode *GM = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(this)))
-        GM->ClearPlannedPath();
+    {
+        GM->ClearPreview();
+    }
 }
 
 void AHexTile::SetHighlighted(bool bHighlight)

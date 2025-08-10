@@ -197,7 +197,16 @@ ADemoGameMode::ADemoGameMode()
     // Crée les deux composants runtime
     GridManager = CreateDefaultSubobject<UHexGridManager>(TEXT("HexGridManager"));
     PathFinder = CreateDefaultSubobject<UHexPathFinder>(TEXT("HexPathFinder"));
-
+    static ConstructorHelpers::FClassFinder<APlayerController> PC_BP(TEXT("/Game/Blueprints/Core/Player/BP_PC"));
+    if (PC_BP.Succeeded())
+    {
+        PlayerControllerClass = PC_BP.Class;
+        UE_LOG(LogTemp, Warning, TEXT("PlayerControllerClass forcé sur %s"), *PlayerControllerClass->GetName());
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("BP_PC introuvable au chemin fourni."));
+    }
     AddOwnedComponent(GridManager);
     AddOwnedComponent(PathFinder);
     if (!ensure(GridManager)) // vérifier que le component a bien été créé
@@ -221,8 +230,49 @@ ADemoGameMode::ADemoGameMode()
 void ADemoGameMode::BeginPlay()
 {
     Super::BeginPlay();
-
+    if (APlayerController *PC = GetWorld()->GetFirstPlayerController())
+        UE_LOG(LogTemp, Warning, TEXT("PC actif: %s"), *PC->GetClass()->GetName());
     PathView = GetWorld()->SpawnActor<APathView>();
+        UE_LOG(LogTemp, Warning, TEXT("GM actif: %s"), *GetClass()->GetName());
+
+    APlayerController* OldPC = GetWorld()->GetFirstPlayerController();
+    if (OldPC)
+        UE_LOG(LogTemp, Warning, TEXT("PC actif: %s (attendu: %s)"),
+            *OldPC->GetClass()->GetName(),
+            PlayerControllerClass ? *PlayerControllerClass->GetName() : TEXT("(none)"));
+
+    // Si le niveau ne prend pas la bonne classe, on remplace proprement
+    if (PlayerControllerClass && OldPC && !OldPC->IsA(PlayerControllerClass))
+    {
+        APawn* Pawn = OldPC->GetPawn();
+
+        FActorSpawnParameters Params;
+        Params.Instigator = Pawn;
+        Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+        APlayerController* NewPC = GetWorld()->SpawnActor<APlayerController>(
+            PlayerControllerClass,
+            Pawn ? Pawn->GetActorLocation() : FVector::ZeroVector,
+            Pawn ? Pawn->GetActorRotation() : FRotator::ZeroRotator,
+            Params);
+
+        if (NewPC)
+        {
+            if (Pawn)
+            {
+                OldPC->UnPossess();
+                NewPC->Possess(Pawn);
+            }
+            UE_LOG(LogTemp, Warning, TEXT("PC remplacé: %s -> %s"),
+                *OldPC->GetClass()->GetName(), *NewPC->GetClass()->GetName());
+
+            OldPC->Destroy();
+        }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("Echec spawn PlayerControllerClass %s"), *PlayerControllerClass->GetName());
+        }
+    }
     if (!ensure(GridManager))
     {
         UE_LOG(LogTemp, Error, TEXT("DemoGameMode BeginPlay: GridManager is NULL, aborting grid gen"));
@@ -261,6 +311,10 @@ void ADemoGameMode::BeginPlay()
         Mode.SetHideCursorDuringCapture(false);
         Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
         PC->SetInputMode(Mode);
+    }
+    if (!PathView)
+    {
+        PathView = GetWorld()->SpawnActor<APathView>();
     }
 }
 
@@ -335,23 +389,30 @@ void ADemoGameMode::InitializePawnStartTile(const FHexAxialCoordinates &StartCoo
     }
 }
 
-void ADemoGameMode::ShowPlannedPathTo(AHexTile* GoalTile)
+void ADemoGameMode::ShowPlannedPathTo(AHexTile *GoalTile)
 {
-    if (!GridManager || !PathFinder || !GoalTile || !PathView) return;
+    if (!GridManager || !PathFinder || !GoalTile || !PathView)
+        return;
 
     // Start = tuile actuelle du pawn
-    AHexTile* StartTile = /* récupère ta tuile courante du pawn */ nullptr;
-    if (!StartTile) return;
+    AHexTile *StartTile = /* récupère ta tuile courante du pawn */ nullptr;
+    if (!StartTile)
+        return;
 
     const FHexAxialCoordinates Start = StartTile->GetAxialCoordinates();
-    const FHexAxialCoordinates Goal  = GoalTile->GetAxialCoordinates();
+    const FHexAxialCoordinates Goal = GoalTile->GetAxialCoordinates();
 
     TArray<FHexAxialCoordinates> AxialPath = PathFinder->FindPath(Start, Goal);
-    if (AxialPath.Num() < 2) { PathView->Clear(); return; }
+    if (AxialPath.Num() < 2)
+    {
+        PathView->Clear();
+        return;
+    }
 
-    TArray<FVector> Points; Points.Reserve(AxialPath.Num());
-    for (const auto& C : AxialPath)
-        if (AHexTile* T = GridManager->GetHexTileAt(C))
+    TArray<FVector> Points;
+    Points.Reserve(AxialPath.Num());
+    for (const auto &C : AxialPath)
+        if (AHexTile *T = GridManager->GetHexTileAt(C))
             Points.Add(T->GetActorLocation());
 
     PathView->Show(Points);
@@ -359,5 +420,94 @@ void ADemoGameMode::ShowPlannedPathTo(AHexTile* GoalTile)
 
 void ADemoGameMode::ClearPlannedPath()
 {
-    if (PathView) PathView->Clear();
+    if (PathView)
+        PathView->Clear();
+}
+
+AHexPawn *ADemoGameMode::GetPlayerPawnTyped() const
+{
+    return Cast<AHexPawn>(UGameplayStatics::GetPlayerPawn(this, 0));
+}
+
+void ADemoGameMode::PreviewPathTo(AHexTile *GoalTile)
+{
+    if (!bPreviewEnabled)
+        return;
+    if (!GoalTile)
+        return;
+    PendingGoal = GoalTile;
+
+    // throttle 100 ms
+    if (!GetWorldTimerManager().IsTimerActive(PreviewThrottle))
+        GetWorldTimerManager().SetTimer(PreviewThrottle, this, &ADemoGameMode::DoPreviewTick, 0.10f, false);
+}
+
+void ADemoGameMode::DoPreviewTick()
+{
+    if (!PathView)
+        return;
+    if (!bPreviewEnabled)
+    {
+        ClearPreview();
+        return;
+    }
+
+    UHexGridManager *GM = GetHexGridManager();
+    UHexPathFinder *PF = GetHexPathFinder();
+    if (!GM || !PF)
+        return;
+
+    AHexPawn *P = GetPlayerPawnTyped();
+    if (!P)
+        return;
+
+    AHexTile *StartTile = P->GetCurrentTile();
+    AHexTile *GoalTile = PendingGoal.IsValid() ? PendingGoal.Get() : nullptr;
+    if (!StartTile || !GoalTile)
+        return;
+
+    const FHexAxialCoordinates Start = StartTile->GetAxialCoordinates();
+    const FHexAxialCoordinates Goal = GoalTile->GetAxialCoordinates();
+
+    if (Start == LastStart && Goal == LastGoal)
+        return;
+    LastStart = Start;
+    LastGoal = Goal;
+
+    TArray<FHexAxialCoordinates> AxialPath = PF->FindPath(Start, Goal);
+    if (AxialPath.Num() < 2)
+    {
+        ClearPreview();
+        return;
+    }
+
+    TArray<FVector> Points;
+    Points.Reserve(AxialPath.Num());
+    for (const auto &C : AxialPath)
+        if (AHexTile *T = GM->GetHexTileAt(C))
+            Points.Add(T->GetActorLocation());
+
+    PathView->Show(Points);
+}
+
+void ADemoGameMode::ClearPreview()
+{
+    LastStart = {INT32_MAX, INT32_MAX};
+    LastGoal = {INT32_MAX, INT32_MAX};
+    if (PathView)
+        PathView->Clear();
+}
+
+void ADemoGameMode::SetPreviewEnabled(bool bEnabled)
+{
+    bPreviewEnabled = bEnabled;
+    if (!bPreviewEnabled)
+        ClearPreview();
+}
+
+void ADemoGameMode::TogglePreview()
+{
+    bPreviewEnabled = !bPreviewEnabled;
+    if (!bPreviewEnabled)
+        ClearPreview();
 }
