@@ -1,98 +1,85 @@
 #include "HexPathFinder.h"
 #include "HexGridManager.h"
-#include "DemoGameMode.h"
-#include "Kismet/GameplayStatics.h"
 #include "Algo/Reverse.h"
 
 UHexPathFinder::UHexPathFinder()
 {
-    PrimaryComponentTick.bCanEverTick = false;
+	PrimaryComponentTick.bCanEverTick = false;
 }
 
-// Directions déjà adaptées à ton axial (q peut varier de 2)
-static const FHexAxialCoordinates GHexDirs[6] = {
-    {+2,  0}, {+1, -1}, {-1, -1},
-    {-2,  0}, {-1, +1}, {+1, +1}
-};
-
-void UHexPathFinder::GetValidNeighbors(UHexGridManager* Grid,
-                                       const FHexAxialCoordinates& From,
-                                       TArray<FHexAxialCoordinates>& OutNeighbors) const
+void UHexPathFinder::GetValidNeighbors(const FHexAxialCoordinates& From,
+                                       TArray<FHexAxialCoordinates>& Out) const
 {
-    OutNeighbors.Reset();
-    if (!Grid) return;
-    OutNeighbors = Grid->GetNeighbors(From);
+	Out.Reset();
+	if (!GridRef) return;
+	Out = GridRef->GetNeighbors(From);
 }
 
-void UHexPathFinder::ReconstructPath(const TMap<FHexAxialCoordinates, FHexAxialCoordinates>& Parent,
+int32 UHexPathFinder::Heuristic(const FHexAxialCoordinates& A, const FHexAxialCoordinates& B) const
+{
+	// Heuristique admissible fournie par la grille (doubled-q / axial)
+	return GridRef ? GridRef->AxialDistance(A, B) : 0;
+}
+
+void UHexPathFinder::ReconstructPath(const TMap<FHexAxialCoordinates,FHexAxialCoordinates>& Parent,
                                      const FHexAxialCoordinates& Start,
                                      const FHexAxialCoordinates& Goal,
                                      TArray<FHexAxialCoordinates>& OutPath)
 {
-    OutPath.Reset();
-    FHexAxialCoordinates Cur = Goal;
-    OutPath.Add(Cur);
-
-    while (!(Cur == Start))
-    {
-        const FHexAxialCoordinates* Prev = Parent.Find(Cur);
-        if (!Prev) { OutPath.Reset(); return; }
-        Cur = *Prev;
-        OutPath.Add(Cur);
-    }
-    Algo::Reverse(OutPath);
+	OutPath.Reset();
+	FHexAxialCoordinates Cur = Goal;
+	OutPath.Add(Cur);
+	while (!(Cur == Start))
+	{
+		if (const FHexAxialCoordinates* Prev = Parent.Find(Cur))
+		{
+			Cur = *Prev;
+			OutPath.Add(Cur);
+		}
+		else
+		{
+			OutPath.Reset(); // cassé
+			return;
+		}
+	}
+	Algo::Reverse(OutPath);
 }
 
 TArray<FHexAxialCoordinates> UHexPathFinder::FindPath(const FHexAxialCoordinates& Start,
                                                       const FHexAxialCoordinates& Goal)
 {
     TArray<FHexAxialCoordinates> Empty;
+    if (!GridRef) return Empty;
 
-    UWorld* World = GetWorld();
-    if (!World) return Empty;
+    if (Start == Goal) { TArray<FHexAxialCoordinates> P; P.Add(Start); return P; }
 
-    ADemoGameMode* GM = World->GetAuthGameMode<ADemoGameMode>();
-    if (!GM) return Empty;
-
-    UHexGridManager* Grid = GM->GetHexGridManager();
-    if (!Grid) return Empty;
-
-    if (Start == Goal)
+    auto Heuristic = [this](const FHexAxialCoordinates& A, const FHexAxialCoordinates& B)
     {
-        TArray<FHexAxialCoordinates> P; P.Add(Start);
-        return P;
-    }
+        return GridRef->AxialDistance(A, B);
+    };
 
-    // A*
-    TSet<FHexAxialCoordinates> Open;
-    TSet<FHexAxialCoordinates> Closed;
-    TMap<FHexAxialCoordinates, FHexAxialCoordinates> Parent;
-    TMap<FHexAxialCoordinates, int32> GScore;
-    TMap<FHexAxialCoordinates, int32> FScore;
+    TSet<FHexAxialCoordinates> Open, Closed;
+    TMap<FHexAxialCoordinates,FHexAxialCoordinates> Parent;
+    TMap<FHexAxialCoordinates,int32> GScore, FScore;
 
     Open.Add(Start);
     GScore.Add(Start, 0);
-    FScore.Add(Start, Grid->AxialDistance(Start, Goal)); // heuristique admissible pour TON système
+    FScore.Add(Start, Heuristic(Start, Goal));
 
     TArray<FHexAxialCoordinates> Neigh;
 
     while (Open.Num() > 0)
     {
-        // Sélection du node: min(F) puis tie-break sur G max (réduit les détours)
+        // pick best by F asc then G desc
         FHexAxialCoordinates Current = *Open.CreateIterator();
         int32 BestF = *FScore.Find(Current);
         int32 BestG = *GScore.Find(Current);
-
         for (const FHexAxialCoordinates& N : Open)
         {
-            const int32 FN = *FScore.Find(N);
-            const int32 GN = *GScore.Find(N);
-            if (FN < BestF || (FN == BestF && GN > BestG))
-            {
-                BestF = FN;
-                BestG = GN;
-                Current = N;
-            }
+            const int32* FN = FScore.Find(N);
+            const int32* GN = GScore.Find(N);
+            if (!FN || !GN) continue;
+            if (*FN < BestF || (*FN == BestF && *GN > BestG)) { BestF = *FN; BestG = *GN; Current = N; }
         }
 
         if (Current == Goal)
@@ -106,40 +93,31 @@ TArray<FHexAxialCoordinates> UHexPathFinder::FindPath(const FHexAxialCoordinates
         Closed.Add(Current);
 
         Neigh.Reset();
-        GetValidNeighbors(Grid, Current, Neigh);
+        GetValidNeighbors(Current, Neigh);  // <-- correct ici
 
-        // G courant doit exister
         const int32* GcurPtr = GScore.Find(Current);
-        if (!GcurPtr) { continue; }
+        if (!GcurPtr) continue;
         const int32 Gcur = *GcurPtr;
 
         for (const FHexAxialCoordinates& N : Neigh)
         {
             if (Closed.Contains(N)) continue;
 
-            const int32 TentativeG = Gcur + 1; // coût uniforme
+            const int32 TentativeG = Gcur + 1;
+            bool bBetter = false;
 
-            bool bIsBetter = false;
-            if (!Open.Contains(N))
-            {
-                Open.Add(N);
-                bIsBetter = true;
-            }
-            else
-            {
-                if (const int32* Gold = GScore.Find(N))
-                    bIsBetter = TentativeG < *Gold;
-                else
-                    bIsBetter = true; // en Open sans G, on met à jour
-            }
+            if (!Open.Contains(N)) { Open.Add(N); bBetter = true; }
+            else if (const int32* Gold = GScore.Find(N)) { bBetter = TentativeG < *Gold; }
+            else { bBetter = true; }
 
-            if (bIsBetter)
+            if (bBetter)
             {
                 Parent.Add(N, Current);
                 GScore.Add(N, TentativeG);
-                FScore.Add(N, TentativeG + Grid->AxialDistance(N, Goal));
+                FScore.Add(N, TentativeG + Heuristic(N, Goal));
             }
         }
     }
+
     return Empty;
 }

@@ -32,7 +32,7 @@ void AHexTile::BeginPlay()
         return;
     }
 
-    if (UStaticMeshComponent *Mesh = GetVisualMesh())
+    if (UStaticMeshComponent* Mesh = GetVisualMesh())
     {
         if (!DynamicMaterial)
             DynamicMaterial = Mesh->CreateAndSetMaterialInstanceDynamic(0);
@@ -44,9 +44,16 @@ void AHexTile::BeginPlay()
             UpdateMaterialColor();
         }
     }
+
+    if (DynamicMaterial && TileType == EHexTileType::Shop)
+    {
+        DynamicMaterial->SetVectorParameterValue(TEXT("BaseColor"), TypeTint_Shop);
+        DynamicMaterial->SetVectorParameterValue(TEXT("EmissiveColor"), TypeTint_Shop);
+        DynamicMaterial->SetScalarParameterValue(TEXT("EmissiveStrength"), 0.5f);
+    }
 }
 
-UStaticMeshComponent *AHexTile::GetVisualMesh()
+UStaticMeshComponent* AHexTile::GetVisualMesh()
 {
     if (IsValid(CachedVisualMesh) && !CachedVisualMesh->IsBeingDestroyed())
         return CachedVisualMesh;
@@ -54,55 +61,73 @@ UStaticMeshComponent *AHexTile::GetVisualMesh()
     if (IsValid(TileMesh))
         return CachedVisualMesh = TileMesh;
 
-    TArray<UStaticMeshComponent *> comps;
+    TArray<UStaticMeshComponent*> comps;
     GetComponents<UStaticMeshComponent>(comps);
 
     if (VisualMeshTag != NAME_None)
-        for (auto *c : comps)
+        for (auto* c : comps)
             if (IsValid(c) && c->ComponentHasTag(VisualMeshTag))
                 return CachedVisualMesh = c;
 
     const FString Wanted = VisualMeshName.ToString();
-    for (auto *c : comps)
+    for (auto* c : comps)
         if (IsValid(c) && c->GetName().Equals(Wanted, ESearchCase::CaseSensitive))
             return CachedVisualMesh = c;
 
     return CachedVisualMesh = (comps.Num() ? comps[0] : nullptr);
 }
 
-void AHexTile::HandleOnClicked(AActor *TouchedActor, FKey ButtonPressed)
+void AHexTile::HandleOnClicked(AActor* /*TouchedActor*/, FKey /*ButtonPressed*/)
 {
-    if (ADemoGameMode *GM = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(this)))
+    // Si c'est une case Shop => ouvrir la boutique et NE PAS lancer le pathfinding
+    if (TileType == EHexTileType::Shop || bIsShop || ActorHasTag(TEXT("Shop")))
+    {
+        if (ADemoGameMode* GM = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(this)))
+            GM->OpenShopAt(this);
+        return;
+    }
+
+    // Sinon comportement normal (click-to-move)
+    if (ADemoGameMode* GM = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(this)))
     {
         GM->HandleTileClicked(this);
     }
 }
 
-void AHexTile::HandleOnBeginCursorOver(AActor *TouchedActor)
+void AHexTile::HandleOnBeginCursorOver(AActor* /*TouchedActor*/)
 {
     SetHighlighted(true);
 
-    if (ADemoGameMode *GM = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(this)))
+    if (ADemoGameMode* GM = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(this)))
     {
         GM->PreviewPathTo(this);
     }
+
+    // Pour le contour, on agit sur le mesh (et pas sur l’acteur)
+    if (TileType == EHexTileType::Shop || bIsShop)
+        if (UStaticMeshComponent* Mesh = GetVisualMesh())
+            Mesh->SetRenderCustomDepth(true);
 }
 
-void AHexTile::HandleOnEndCursorOver(AActor *TouchedActor)
+void AHexTile::HandleOnEndCursorOver(AActor* /*TouchedActor*/)
 {
     SetHighlighted(false);
 
-    if (ADemoGameMode *GM = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(this)))
+    if (ADemoGameMode* GM = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(this)))
     {
         GM->ClearPreview();
     }
+
+    if (TileType == EHexTileType::Shop || bIsShop)
+        if (UStaticMeshComponent* Mesh = GetVisualMesh())
+            Mesh->SetRenderCustomDepth(false);
 }
 
 void AHexTile::SetHighlighted(bool bHighlight)
 {
     bIsHighlighted = bHighlight;
 
-    if (UStaticMeshComponent *Mesh = GetVisualMesh())
+    if (UStaticMeshComponent* Mesh = GetVisualMesh())
     {
         if (!DynamicMaterial)
             DynamicMaterial = Mesh->CreateAndSetMaterialInstanceDynamic(0);
@@ -114,8 +139,10 @@ void AHexTile::SetHighlighted(bool bHighlight)
             DynamicMaterial->SetVectorParameterValue(TEXT("EmissiveColor"), GlowColor);
             UpdateMaterialColor();
         }
+
+        // Le surlignage contour passe par le CustomDepth du MESH
         Mesh->SetRenderCustomDepth(bIsHighlighted);
-        Mesh->CustomDepthStencilValue = 1;
+        Mesh->SetCustomDepthStencilValue(1);
     }
 }
 
@@ -132,4 +159,19 @@ void AHexTile::UpdateMaterialColor()
     DynamicMaterial->SetScalarParameterValue(TEXT("Opacity"), ColorToUse.A);
     DynamicMaterial->SetVectorParameterValue(TEXT("EmissiveColor"), GlowColor);
     DynamicMaterial->SetScalarParameterValue(TEXT("EmissiveStrength"), bIsHighlighted ? GlowStrengthOn : GlowStrengthOff);
+}
+
+void AHexTile::SetTileType(EHexTileType NewType)
+{
+    TileType = NewType;
+
+    if (!DynamicMaterial)
+        if (UStaticMeshComponent* Mesh = GetVisualMesh())
+            DynamicMaterial = Mesh->CreateAndSetMaterialInstanceDynamic(0);
+
+    if (DynamicMaterial && TileType == EHexTileType::Shop)
+    {
+        DynamicMaterial->SetVectorParameterValue(TEXT("EmissiveColor"), FLinearColor(0.1f, 1.f, 0.1f, 1.f));
+        DynamicMaterial->SetScalarParameterValue(TEXT("EmissiveStrength"), 0.5f);
+    }
 }

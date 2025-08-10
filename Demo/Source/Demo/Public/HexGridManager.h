@@ -4,7 +4,6 @@
 #include "HexCoordinates.h"
 #include "HexGridManager.generated.h"
 
-
 class AHexTile;
 
 /**
@@ -37,8 +36,7 @@ public:
     TArray<FHexAxialCoordinates> GetNeighbors(const FHexAxialCoordinates &Coords) const;
 
     /** Accès lecture à la map des tuiles (utile pour pathfinding etc.) */
-    const TMap<FHexAxialCoordinates, AHexTile *> &GetHexTiles() const { return TilesMap; }
-
+    const TMap<FHexAxialCoordinates, TWeakObjectPtr<AHexTile>>& GetHexTiles() const { return TilesMap; }
 
     // Cache de voisins calculés en XY (réels)
     TMap<FHexAxialCoordinates, TArray<FHexAxialCoordinates>> WorldNeighbors;
@@ -123,7 +121,7 @@ private:
      */
     FVector ComputeTileSpawnPosition(int32 Q, int32 R) const;
 
-    bool TryComputeTileSpawnPosition(int32 Q, int32 R, FVector& OutLocation) const;
+    bool TryComputeTileSpawnPosition(int32 Q, int32 R, FVector &OutLocation) const;
 
     /** Remap des indices génération -> coordonnées axiales attribuées (n'affecte pas la position monde) */
     UPROPERTY(EditAnywhere, Category = "Hex|Coordinates")
@@ -139,14 +137,23 @@ private:
     UPROPERTY(EditAnywhere, Category = "Hex|Coordinates")
     bool bUseDoubledQForLabels = false;
 
+    UPROPERTY(EditAnywhere, Category = "Hex|Data")
+    TArray<FHexAxialCoordinates> ShopTiles; // coords en doubled-Q
+
+    UFUNCTION(BlueprintCallable, Category = "Hex")
+    void ApplySpecialTiles();
+
     FHexAxialCoordinates MapSpawnIndexToAxial(int32 Q, int32 R) const;
 
 public:
     /** Distance entre A et B selon la convention courante (doubled-q ou non) */
     UFUNCTION(BlueprintPure, Category = "Hex|Query")
-    int32 AxialDistance(const FHexAxialCoordinates& A, const FHexAxialCoordinates& B) const;
+    int32 AxialDistance(const FHexAxialCoordinates &A, const FHexAxialCoordinates &B) const;
 
     /** Map interne Q,R → Actor de tuile */
     UPROPERTY()
-    TMap<FHexAxialCoordinates, AHexTile *> TilesMap;
+    TMap<FHexAxialCoordinates, TWeakObjectPtr<AHexTile>> TilesMap;
+    
+    virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+    virtual void BeginDestroy() override;
 };

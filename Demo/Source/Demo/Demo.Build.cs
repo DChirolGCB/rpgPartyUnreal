@@ -9,18 +9,14 @@ public class Demo : ModuleRules
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
         // Modules publics essentiels pour ActorComponents
-        PublicDependencyModuleNames.AddRange(new string[] 
-        { 
-            "Core", 
-            "CoreUObject", 
-            "Engine", 
-            "InputCore"
-        });
+        PublicDependencyModuleNames.AddRange(new string[] {
+    "Core", "CoreUObject", "Engine", "InputCore", "UMG", "Slate", "SlateCore"
+});
 
         // Modules privés pour fonctionnalités avancées
-        PrivateDependencyModuleNames.AddRange(new string[] 
-        { 
-            "Slate", 
+        PrivateDependencyModuleNames.AddRange(new string[]
+        {
+            "Slate",
             "SlateCore"
         });
 
