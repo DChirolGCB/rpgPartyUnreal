@@ -188,21 +188,32 @@ namespace Hex
 ADemoGameMode::ADemoGameMode()
 {
     DefaultPawnClass = AHexPawn::StaticClass();
+
     GridManager = CreateDefaultSubobject<UHexGridManager>(TEXT("HexGridManager"));
-    PathFinder  = CreateDefaultSubobject<UHexPathFinder>(TEXT("HexPathFinder"));
+    PathFinder = CreateDefaultSubobject<UHexPathFinder>(TEXT("HexPathFinder"));
+
+    static ConstructorHelpers::FClassFinder<AHexTile> TileBP(TEXT("/Game/Blueprints/BP_HexTile"));
+    if (TileBP.Succeeded())
+    {
+        HexTileClass = TileBP.Class;
+    }
 }
 
 void ADemoGameMode::BeginPlay()
 {
     Super::BeginPlay();
-    if (!GridManager) {
-    GridManager = NewObject<UHexGridManager>(this, TEXT("HexGridManager_RT"));
-    GridManager->RegisterComponent();
-}
-if (!PathFinder) {
-    PathFinder = NewObject<UHexPathFinder>(this, TEXT("HexPathFinder_RT"));
-    PathFinder->RegisterComponent();
-}
+    if (!GridManager || !GridManager->IsRegistered())
+    {
+        GridManager = NewObject<UHexGridManager>(this, TEXT("HexGridManager_RT"));
+        AddInstanceComponent(GridManager);
+        GridManager->RegisterComponent();
+    }
+    if (!PathFinder || !PathFinder->IsRegistered())
+    {
+        PathFinder = NewObject<UHexPathFinder>(this, TEXT("HexPathFinder_RT"));
+        AddInstanceComponent(PathFinder);
+        PathFinder->RegisterComponent();
+    }
 
     UWorld *W = GetWorld();
     if (!W)
@@ -223,9 +234,13 @@ if (!PathFinder) {
     }
 
     // Optionnel : forcer le PC depuis un SoftClass si différent
-    if (PCClassSoft.IsValid())
+    // Optionnel : forcer le PC depuis un SoftClass si défini dans le BP de GameMode
+    if (!PCClassSoft.IsNull())
     {
-        PlayerControllerClass = PCClassSoft.Get();
+        if (UClass *PCCls = PCClassSoft.LoadSynchronous())
+        {
+            PlayerControllerClass = PCCls;
+        }
     }
 
     if (APlayerController *PC0 = GetWorld()->GetFirstPlayerController())
@@ -307,13 +322,12 @@ if (!PathFinder) {
     }
 
     if (!IsValid(PathView))
-{
-    PathView = GetWorld()->SpawnActor<APathView>();
-}
+    {
+        PathView = GetWorld()->SpawnActor<APathView>();
+    }
 }
 
-
-void ADemoGameMode::HandleTileClicked(AHexTile* ClickedTile)
+void ADemoGameMode::HandleTileClicked(AHexTile *ClickedTile)
 {
     if (!ClickedTile || !GridManager || !PathFinder)
         return;
@@ -325,14 +339,14 @@ void ADemoGameMode::HandleTileClicked(AHexTile* ClickedTile)
         return;
     }
 
-    AHexPawn* HexP = GetPlayerPawnTyped();
+    AHexPawn *HexP = GetPlayerPawnTyped();
     if (!HexP)
     {
         UE_LOG(LogTemp, Error, TEXT("HandleTileClicked: Pawn n'est pas un AHexPawn"));
         return;
     }
 
-    AHexTile* FromTile = HexP->GetCurrentTile();
+    AHexTile *FromTile = HexP->GetCurrentTile();
     if (!FromTile)
     {
         HexP->SetCurrentTile(ClickedTile);
@@ -343,14 +357,15 @@ void ADemoGameMode::HandleTileClicked(AHexTile* ClickedTile)
     }
 
     const FHexAxialCoordinates Start = FromTile->GetAxialCoordinates();
-    const FHexAxialCoordinates Goal  = ClickedTile->GetAxialCoordinates();
-    if (Start == Goal) return;
+    const FHexAxialCoordinates Goal = ClickedTile->GetAxialCoordinates();
+    if (Start == Goal)
+        return;
 
     UE_LOG(LogTemp, Warning, TEXT("A*: Start=(%d,%d) Goal=(%d,%d)"),
            Start.Q, Start.R, Goal.Q, Goal.R);
     UE_LOG(LogTemp, Warning, TEXT("A*: StartExists=%d GoalExists=%d StartNeigh=%d GoalNeigh=%d"),
-           GridManager->GetHexTileAt(Start)!=nullptr,
-           GridManager->GetHexTileAt(Goal)!=nullptr,
+           GridManager->GetHexTileAt(Start) != nullptr,
+           GridManager->GetHexTileAt(Goal) != nullptr,
            GridManager->GetNeighbors(Start).Num(),
            GridManager->GetNeighbors(Goal).Num());
 
@@ -365,7 +380,6 @@ void ADemoGameMode::HandleTileClicked(AHexTile* ClickedTile)
 
     HexP->StartPathFollowing(Path, GridManager);
 }
-
 
 void ADemoGameMode::InitializePawnStartTile(const FHexAxialCoordinates &StartCoords)
 {
@@ -522,7 +536,7 @@ void ADemoGameMode::TogglePreview()
         ClearPreview();
 }
 
-void ADemoGameMode::OpenShopAt(AHexTile* ShopTile)
+void ADemoGameMode::OpenShopAt(AHexTile *ShopTile)
 {
     if (!ShopTile)
         return;
@@ -533,19 +547,19 @@ void ADemoGameMode::OpenShopAt(AHexTile* ShopTile)
         return;
     }
 
-    if (UUserWidget* W = CreateWidget<UUserWidget>(GetWorld(), ShopWidgetClass))
+    if (UUserWidget *W = CreateWidget<UUserWidget>(GetWorld(), ShopWidgetClass))
     {
         W->AddToViewport();
         // Optionnel: pause input jeu, montrer curseur, etc.
-        if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
+        if (APlayerController *PC = UGameplayStatics::GetPlayerController(this, 0))
         {
             PC->bShowMouseCursor = true;
-            FInputModeGameAndUI Mode; Mode.SetHideCursorDuringCapture(false);
+            FInputModeGameAndUI Mode;
+            Mode.SetHideCursorDuringCapture(false);
             PC->SetInputMode(Mode);
         }
     }
 }
-
 
 void ADemoGameMode::EndPlay(const EEndPlayReason::Type Reason)
 {

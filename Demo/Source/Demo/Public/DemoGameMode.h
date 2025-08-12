@@ -8,14 +8,15 @@
 #include "HexGridManager.h"
 #include "HexPathFinder.h"
 #include "PathView.h"
-#include "DemoGameMode.generated.h"
 
-class UUserWidget;            // <-- AVANT la classe, au niveau global
+class UUserWidget; // <-- AVANT la classe, au niveau global
 class AHexTile;
 class UHexGridManager;
 class UHexPathFinder;
 class APathView;
 class AHexPawn;
+
+#include "DemoGameMode.generated.h"
 /**
  * GameMode central : possède GridManager + PathFinder, gère le click-to-move + preview.
  */
@@ -26,79 +27,76 @@ class DEMO_API ADemoGameMode : public AGameModeBase
 
 public:
     ADemoGameMode();
-    
-    /** Appelé par AHexTile::HandleOnClicked */
-    UFUNCTION(BlueprintCallable, Category="Hex|Input")
-    void HandleTileClicked(class AHexTile* ClickedTile);
 
-    // Getters
-    UFUNCTION(BlueprintPure, Category="Hex")
-    UHexGridManager* GetHexGridManager() const { return GridManager; }
+    UFUNCTION(BlueprintCallable, Category = "Hex|Input")
+    void HandleTileClicked(class AHexTile *ClickedTile);
 
-    UFUNCTION(BlueprintPure, Category="Hex")
-    UHexPathFinder* GetHexPathFinder() const { return PathFinder; }
+    UFUNCTION(BlueprintPure, Category = "Hex")
+    UHexGridManager *GetHexGridManager() const { return GridManager; }
 
-    UFUNCTION(BlueprintCallable, Category="Hex|Path")
-    void ShowPlannedPathTo(class AHexTile* GoalTile);
+    UFUNCTION(BlueprintPure, Category = "Hex")
+    UHexPathFinder *GetHexPathFinder() const { return PathFinder; }
 
-    UFUNCTION(BlueprintCallable, Category="Hex|Path")
+    UFUNCTION(BlueprintCallable, Category = "Hex|Path")
+    void ShowPlannedPathTo(AHexTile *GoalTile);
+
+    UFUNCTION(BlueprintCallable, Category = "Hex|Path")
     void ClearPlannedPath();
-
-    // Preview
-    void PreviewPathTo(class AHexTile* GoalTile);
+    void PreviewPathTo(class AHexTile *GoalTile);
     void ClearPreview();
 
-    UFUNCTION(BlueprintCallable, Category="Hex|PathPreview")
+    UFUNCTION(BlueprintCallable, Category = "Hex|PathPreview")
     void SetPreviewEnabled(bool bEnabled);
 
-    UFUNCTION(BlueprintCallable, Category="Hex|PathPreview")
+    UFUNCTION(BlueprintCallable, Category = "Hex|PathPreview")
     void TogglePreview();
 
-    UFUNCTION(BlueprintPure, Category="Hex|PathPreview")
+    UFUNCTION(BlueprintPure, Category = "Hex|PathPreview")
     bool IsPreviewEnabled() const { return bPreviewEnabled; }
 
-    // Gameplay
-    UFUNCTION(BlueprintCallable, Category="UI|Shop")
-void OpenShopAt(class AHexTile* ShopTile);
+    UFUNCTION(BlueprintCallable, Category = "Hex|Gameplay")
+    void OpenShopAt(class AHexTile *ShopTile);
 
 protected:
     virtual void BeginPlay() override;
-    virtual void EndPlay(const EEndPlayReason::Type Reason) override;
-    void InitializePawnStartTile(const FHexAxialCoordinates& StartCoords);
+    virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override; // ← AJOUT
 
-    // --- Params de génération ---
-    UPROPERTY(EditDefaultsOnly, Category="Hex")
+    void InitializePawnStartTile(const FHexAxialCoordinates &StartCoords);
+
+    UPROPERTY(EditDefaultsOnly, Category = "Hex")
     TSubclassOf<AHexTile> HexTileClass;
 
-    UPROPERTY(EditDefaultsOnly, Category="Hex")
+    UPROPERTY(EditDefaultsOnly, Category = "Hex")
     int32 GridRadius = 10;
 
-    // --- Components possédés par le GameMode ---
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Hex", meta=(AllowPrivateAccess="true"))
-    UHexGridManager* GridManager = nullptr;
+    UPROPERTY(VisibleAnywhere, Category = "Hex")
+    UHexGridManager *GridManager = nullptr;
 
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Hex", meta=(AllowPrivateAccess="true"))
-    UHexPathFinder* PathFinder = nullptr;
+    UPROPERTY(VisibleAnywhere, Category = "Hex")
+    UHexPathFinder *PathFinder = nullptr;
 
-    // Permet de forcer le PlayerController BP si nécessaire
-    UPROPERTY(EditDefaultsOnly, Category="Classes")
+    UPROPERTY()
+    APathView *PathView = nullptr;
+
+    // --- SHOP UI ---
+    UPROPERTY(EditDefaultsOnly, Category = "UI") // ← AJOUT
+    TSubclassOf<UUserWidget> ShopWidgetClass;    // ← AJOUT
+
+    UPROPERTY(EditDefaultsOnly, Category="Player")
     TSoftClassPtr<APlayerController> PCClassSoft;
-
 private:
-    UPROPERTY() APathView* PathView = nullptr;
-    UPROPERTY(EditDefaultsOnly, Category="UI|Shop")
-TSubclassOf<UUserWidget> ShopWidgetClass;
-    UPROPERTY() TWeakObjectPtr<UUserWidget> ShopWidget;  // widget shop affiché
-    
-
     FTimerHandle PreviewThrottle;
     TWeakObjectPtr<class AHexTile> PendingGoal;
-    FHexAxialCoordinates LastStart{ INT32_MAX, INT32_MAX };
-    FHexAxialCoordinates LastGoal { INT32_MAX, INT32_MAX };
+    FHexAxialCoordinates LastStart{INT32_MAX, INT32_MAX};
+    FHexAxialCoordinates LastGoal{INT32_MAX, INT32_MAX};
+
+    // garder un weak vers le widget pour éviter les double-destroy
+    UPROPERTY()
+    TWeakObjectPtr<UUserWidget> ShopWidget; // ← AJOUT
 
     void DoPreviewTick();
-    class AHexPawn* GetPlayerPawnTyped() const;
+    class AHexPawn *GetPlayerPawnTyped() const;
 
-    UPROPERTY(EditAnywhere, Category="Hex|PathPreview")
+    UPROPERTY(EditAnywhere, Category = "Hex|PathPreview")
     bool bPreviewEnabled = true;
 };
