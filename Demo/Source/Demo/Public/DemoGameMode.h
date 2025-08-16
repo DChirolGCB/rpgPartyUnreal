@@ -15,6 +15,7 @@ class UHexGridManager;
 class UHexPathFinder;
 class APathView;
 class AHexPawn;
+class AHexAnimationManager;
 
 #include "DemoGameMode.generated.h"
 /**
@@ -57,11 +58,14 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Hex|Gameplay")
     void OpenShopAt(class AHexTile *ShopTile);
 
+    UPROPERTY(EditAnywhere, Category="Hex|Start")
+    FHexAxialCoordinates StartCoords = FHexAxialCoordinates(0, 6);
+
 protected:
     virtual void BeginPlay() override;
     virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override; // ← AJOUT
 
-    void InitializePawnStartTile(const FHexAxialCoordinates &StartCoords);
+    void InitializePawnStartTile(const FHexAxialCoordinates& InStartCoords);
 
     UPROPERTY(EditDefaultsOnly, Category = "Hex")
     TSubclassOf<AHexTile> HexTileClass;
@@ -84,6 +88,11 @@ protected:
 
     UPROPERTY(EditDefaultsOnly, Category="Player")
     TSoftClassPtr<APlayerController> PCClassSoft;
+
+    UPROPERTY()
+    AHexAnimationManager* AnimationManager = nullptr;
+    
+    int32 NumConnectedPlayers = 0;
 private:
     FTimerHandle PreviewThrottle;
     TWeakObjectPtr<class AHexTile> PendingGoal;
@@ -99,4 +108,14 @@ private:
 
     UPROPERTY(EditAnywhere, Category = "Hex|PathPreview")
     bool bPreviewEnabled = true;
+
+    virtual void PostLogin(APlayerController* NewPlayer) override;
+    virtual void Logout(AController* Exiting) override;
+    AHexPawn* SpawnPlayerPawn(APlayerController* ForPlayer) { return nullptr; } // Implement as needed
+    void AssignPlayerVisuals(AHexPawn* Pawn, int32 PlayerIndex) {} // Implement as needed
+    FTimerHandle SnapRetryHandle;
+
+    UFUNCTION()
+    void TrySnapPawnOnce();
+    
 };

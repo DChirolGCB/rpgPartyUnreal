@@ -10,7 +10,7 @@ public class Demo : ModuleRules
 
         // Modules publics essentiels pour ActorComponents
         PublicDependencyModuleNames.AddRange(new string[] {
-    "Core", "CoreUObject", "Engine", "InputCore", "UMG", "Slate", "SlateCore"
+    "Core", "CoreUObject", "Engine", "InputCore", "UMG", "Slate", "SlateCore", "Paper2D"
 });
 
         // Modules privés pour fonctionnalités avancées

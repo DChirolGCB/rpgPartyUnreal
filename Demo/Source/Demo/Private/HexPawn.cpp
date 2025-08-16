@@ -2,7 +2,11 @@
 #include "HexGridManager.h"
 #include "HexTile.h"
 #include "DemoGameMode.h"
+#include "HexAnimationTypes.h"
 #include "Kismet/GameplayStatics.h"
+#include "HexSpriteComponent.h"
+#include "Net/UnrealNetwork.h"
+#include "GameFramework/PlayerController.h"
 #include "Engine/World.h"
 
 // Includes réels des components ICI (pas dans le .h)
@@ -13,7 +17,9 @@
 AHexPawn::AHexPawn()
 {
 	PrimaryActorTick.bCanEverTick = true;
-
+	bReplicates = true;
+    NetUpdateFrequency = 60.f;
+    MinNetUpdateFrequency = 30.f;
 	if (!RootComponent)
 	{
 		RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
@@ -31,28 +37,68 @@ AHexPawn::AHexPawn()
 	TopDownCamera->bUsePawnControlRotation = false;
 	TopDownCamera->SetProjectionMode(ECameraProjectionMode::Perspective);
 	TopDownCamera->SetFieldOfView(60.f);
+
+	SpriteComp = CreateDefaultSubobject<UHexSpriteComponent>(TEXT("SpriteComp"));
+	SpriteComp->SetupAttachment(RootComponent);
 }
 
 void AHexPawn::BeginPlay()
 {
 	Super::BeginPlay();
-
+	if (APlayerController *PC = UGameplayStatics::GetPlayerController(this, 0))
+	{
+		PC->bAutoManageActiveCameraTarget = false;
+		PC->SetViewTarget(this); // immédiat
+	}
 	if (CameraBoom)
 	{
 		CameraBoom->TargetArmLength = CameraHeight;
-		CameraBoom->SetRelativeRotation(FRotator(-50.f, 0.f, 0.f));
+		CameraBoom->SetRelativeRotation(FRotator(-45.f, 0.f, 0.f));
 	}
 	if (TopDownCamera)
 	{
 		TopDownCamera->SetProjectionMode(ECameraProjectionMode::Perspective);
 	}
+	if (!SpriteComp || SpriteComp->HasAnyFlags(RF_ClassDefaultObject) || SpriteComp->GetOwner() != this)
+    {
+        if (UHexSpriteComponent* Found = FindComponentByClass<UHexSpriteComponent>())
+        {
+            SpriteComp = Found;
+            UE_LOG(LogTemp, Warning, TEXT("[Sprite] Rebound to instance comp: %s (owner=%s)"),
+                   *GetNameSafe(SpriteComp), *GetNameSafe(SpriteComp->GetOwner()));
+        }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("[Sprite] No UHexSpriteComponent found on pawn instance"));
+        }
+    }
+
+    if (SpriteComp)
+    {
+        SpriteComp->SetPlayRate(1.f);
+        SpriteComp->SetAnimationState(EHexAnimState::Idle);
+        UE_LOG(LogTemp, Warning, TEXT("[Sprite] Idle=%s Walk=%s Flipbook=%s Owner=%s IsCDO=%d"),
+            *GetNameSafe(SpriteComp->IdleAnim),
+            *GetNameSafe(SpriteComp->WalkAnim),
+            *GetNameSafe(SpriteComp->GetFlipbook()),
+            *GetNameSafe(SpriteComp->GetOwner()),
+            SpriteComp->HasAnyFlags(RF_ClassDefaultObject) ? 1 : 0);
+    }
+
+    if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
+    { PC->bAutoManageActiveCameraTarget = false; PC->SetViewTarget(this); }
 }
 
 void AHexPawn::StartPathFollowing(const TArray<FHexAxialCoordinates> &InPath, UHexGridManager *InGridManager)
 {
 	GridRef = InGridManager;
 	CurrentPath = InPath;
-
+	bIsMoving = true;
+	if (SpriteComp && HasAuthority())
+	{
+		SpriteComp->SetAnimationState(EHexAnimState::Walking);
+		UE_LOG(LogTemp, Warning, TEXT("[Anim] -> Walking (StartPathFollowing)"));
+	}
 	int32 StartIndex = 0;
 	if (CurrentTile && CurrentPath.Num() > 0)
 	{
@@ -63,6 +109,11 @@ void AHexPawn::StartPathFollowing(const TArray<FHexAxialCoordinates> &InPath, UH
 	if (!GridRef || !CurrentPath.IsValidIndex(StartIndex))
 	{
 		bIsMoving = false;
+		if (SpriteComp && HasAuthority())
+		{
+			SpriteComp->SetAnimationState(EHexAnimState::Idle);
+			UE_LOG(LogTemp, Warning, TEXT("[Anim] -> Idle (stop)"));
+		}
 		return;
 	}
 
@@ -72,6 +123,11 @@ void AHexPawn::StartPathFollowing(const TArray<FHexAxialCoordinates> &InPath, UH
 	if (!NextTile)
 	{
 		bIsMoving = false;
+		if (SpriteComp && HasAuthority())
+		{
+			SpriteComp->SetAnimationState(EHexAnimState::Idle);
+			UE_LOG(LogTemp, Warning, TEXT("[Anim] -> Idle (stop)"));
+		}
 		return;
 	}
 
@@ -85,7 +141,11 @@ void AHexPawn::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 	if (!bIsMoving)
+	{
+		if (SpriteComp)
+			SpriteComp->SetAnimationState(EHexAnimState::Idle);
 		return;
+	}
 
 	StepElapsed += DeltaTime;
 	float Alpha = (StepDuration > SMALL_NUMBER) ? FMath::Clamp(StepElapsed / StepDuration, 0.f, 1.f) : 1.f;
@@ -126,6 +186,11 @@ void AHexPawn::Tick(float DeltaTime)
 		if (!GridRef || !CurrentPath.IsValidIndex(CurrentStepIndex))
 		{
 			bIsMoving = false;
+			if (SpriteComp && HasAuthority())
+			{
+				SpriteComp->SetAnimationState(EHexAnimState::Idle);
+				UE_LOG(LogTemp, Warning, TEXT("[Anim] -> Idle (stop)"));
+			}
 			return;
 		}
 
@@ -161,6 +226,11 @@ void AHexPawn::Tick(float DeltaTime)
 		if (!NextTile)
 		{
 			bIsMoving = false;
+			if (SpriteComp && HasAuthority())
+			{
+				SpriteComp->SetAnimationState(EHexAnimState::Idle);
+				UE_LOG(LogTemp, Warning, TEXT("[Anim] -> Idle (stop)"));
+			}
 			return;
 		}
 
@@ -200,4 +270,46 @@ void AHexPawn::InitializePawnStartTile(const FHexAxialCoordinates &StartCoords)
 	CurrentTile = Tile;
 	SetActorLocation(Tile->GetActorLocation());
 	UE_LOG(LogTemp, Warning, TEXT("Pawn initialized on tile (%d, %d)"), StartCoords.Q, StartCoords.R);
+}
+
+void AHexPawn::GetLifetimeReplicatedProps(TArray<FLifetimeProperty> &OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(AHexPawn, ReplicatedPath);
+}
+
+void AHexPawn::OnRep_CurrentPath()
+{
+	// Quand le path répliqué arrive sur client → lancer déplacement
+	if (GridRef && ReplicatedPath.Num() > 0)
+	{
+		StartPathFollowing(ReplicatedPath, GridRef);
+	}
+}
+
+void AHexPawn::ServerRequestMove_Implementation(const TArray<FHexAxialCoordinates> &NewPath)
+{
+	ReplicatedPath = NewPath;
+	StartPathFollowing(NewPath, GridRef);
+}
+
+void AHexPawn::PossessedBy(AController *NewController)
+{
+	Super::PossessedBy(NewController);
+	if (APlayerController *PC = Cast<APlayerController>(NewController))
+	{
+		PC->bAutoManageActiveCameraTarget = false;
+		PC->SetViewTarget(this); // serveur
+	}
+}
+
+void AHexPawn::OnRep_Controller()
+{
+	Super::OnRep_Controller();
+	if (APlayerController *PC = Cast<APlayerController>(GetController()))
+	{
+		PC->bAutoManageActiveCameraTarget = false;
+		PC->ClientSetViewTarget(this); // client
+	}
 }

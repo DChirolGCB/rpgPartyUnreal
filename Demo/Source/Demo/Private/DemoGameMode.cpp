@@ -8,6 +8,7 @@
 #include "HexPawn.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
+#include "HexAnimationManager.h"
 #include "UObject/ConstructorHelpers.h"
 
 namespace HexBridge
@@ -185,6 +186,29 @@ namespace Hex
     }
 }
 
+void ADemoGameMode::PostLogin(APlayerController* NewPlayer)
+{
+    Super::PostLogin(NewPlayer);
+
+    // Lance un retry toutes 0.05s jusqu’à snap réussi
+    GetWorldTimerManager().SetTimer(
+        SnapRetryHandle, this, &ADemoGameMode::TrySnapPawnOnce,
+        0.05f, /*bLoop=*/true, /*FirstDelay=*/0.0f);
+}
+
+void ADemoGameMode::Logout(AController* Exiting)
+{
+    if (AHexPawn* Pawn = Cast<AHexPawn>(Exiting->GetPawn()))
+    {
+        if (AnimationManager)
+        {
+            AnimationManager->UnregisterPlayer(Pawn);
+        }
+    }
+    
+    Super::Logout(Exiting);
+}
+
 ADemoGameMode::ADemoGameMode()
 {
     DefaultPawnClass = AHexPawn::StaticClass();
@@ -272,6 +296,7 @@ void ADemoGameMode::BeginPlay()
 
         if (NewPC)
         {
+            RestartPlayer(NewPC);
             if (Pawn)
             {
                 OldPC->UnPossess();
@@ -325,6 +350,12 @@ void ADemoGameMode::BeginPlay()
     {
         PathView = GetWorld()->SpawnActor<APathView>();
     }
+
+    UE_LOG(LogTemp, Warning, TEXT("PC=%s  Pawn=%s  ViewTarget=%s"),
+    *GetNameSafe(GetWorld()->GetFirstPlayerController()),
+    *GetNameSafe(GetWorld()->GetFirstPlayerController() ? GetWorld()->GetFirstPlayerController()->GetPawn() : nullptr),
+    *GetNameSafe(GetWorld()->GetFirstPlayerController() ? GetWorld()->GetFirstPlayerController()->GetViewTarget() : nullptr));
+
 }
 
 void ADemoGameMode::HandleTileClicked(AHexTile *ClickedTile)
@@ -381,7 +412,7 @@ void ADemoGameMode::HandleTileClicked(AHexTile *ClickedTile)
     HexP->StartPathFollowing(Path, GridManager);
 }
 
-void ADemoGameMode::InitializePawnStartTile(const FHexAxialCoordinates &StartCoords)
+void ADemoGameMode::InitializePawnStartTile(const FHexAxialCoordinates &InStartCoords)
 {
     if (!GridManager)
     {
@@ -389,11 +420,11 @@ void ADemoGameMode::InitializePawnStartTile(const FHexAxialCoordinates &StartCoo
         return;
     }
 
-    AHexTile *Tile = GridManager->GetHexTileAt(StartCoords);
+    AHexTile *Tile = GridManager->GetHexTileAt(InStartCoords);
     if (!Tile)
     {
         UE_LOG(LogTemp, Error, TEXT("InitializePawnStartTile : pas de tuile à (%d,%d)"),
-               StartCoords.Q, StartCoords.R);
+               InStartCoords.Q, InStartCoords.R);
         return;
     }
 
@@ -401,7 +432,7 @@ void ADemoGameMode::InitializePawnStartTile(const FHexAxialCoordinates &StartCoo
     {
         HexP->SetCurrentTile(Tile);
         UE_LOG(LogTemp, Warning, TEXT("Pawn démarré sur (%d,%d)"),
-               StartCoords.Q, StartCoords.R);
+               InStartCoords.Q, InStartCoords.R);
     }
     else
     {
@@ -563,6 +594,7 @@ void ADemoGameMode::OpenShopAt(AHexTile *ShopTile)
 
 void ADemoGameMode::EndPlay(const EEndPlayReason::Type Reason)
 {
+    GetWorldTimerManager().ClearTimer(SnapRetryHandle);
     GetWorldTimerManager().ClearTimer(PreviewThrottle);
 
     // Détruire PathView proprement
@@ -580,4 +612,28 @@ void ADemoGameMode::EndPlay(const EEndPlayReason::Type Reason)
     }
 
     Super::EndPlay(Reason);
+}
+
+void ADemoGameMode::TrySnapPawnOnce()
+{
+    if (!GridManager) return;
+
+    APlayerController* PC = GetWorld()->GetFirstPlayerController();
+    if (!PC) return;
+
+    AHexPawn* P = Cast<AHexPawn>(PC->GetPawn());
+    if (!P) return;
+
+    AHexTile* T = GridManager->GetHexTileAt(StartCoords);
+    if (!T) return;
+
+    // Snap + caméra
+    P->SetCurrentTile(T);
+    P->SetActorLocation(T->GetActorLocation());
+    PC->bAutoManageActiveCameraTarget = false;
+    PC->SetViewTarget(P);
+
+    // Stop le retry
+    GetWorldTimerManager().ClearTimer(SnapRetryHandle);
+    UE_LOG(LogTemp, Warning, TEXT("Snap OK sur (%d,%d)"), StartCoords.Q, StartCoords.R);
 }
