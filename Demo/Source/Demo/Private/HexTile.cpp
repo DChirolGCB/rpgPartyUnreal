@@ -5,213 +5,284 @@
 #include "DemoGameMode.h"
 #include "Materials/MaterialInstanceDynamic.h"
 
+namespace
+{
+	// Material parameter names (avoids repeated FName allocations)
+	static const FName PARAM_BaseColor = TEXT("BaseColor");
+	static const FName PARAM_Color = TEXT("Color");
+	static const FName PARAM_Albedo = TEXT("Albedo");
+	static const FName PARAM_Opacity = TEXT("Opacity");
+	static const FName PARAM_EmissiveColor = TEXT("EmissiveColor");
+	static const FName PARAM_EmissiveStr = TEXT("EmissiveStrength");
+	static const FName PARAM_IsHighlighted = TEXT("IsHighlighted");
+}
+
 AHexTile::AHexTile()
 {
-    SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
-    RootComponent = SceneRoot;
+	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
+	RootComponent = SceneRoot;
 
-    PrimaryActorTick.bCanEverTick = true; // ← indispensable
-    SetActorTickEnabled(false);           // on ticke seulement pendant l’anim
+	PrimaryActorTick.bCanEverTick = true;
+	SetActorTickEnabled(false);
 }
 
+/** Called when the game starts or when spawned */
 void AHexTile::BeginPlay()
 {
-    Super::BeginPlay();
+	Super::BeginPlay();
 
-    // Init élévation AVANT tout early-return
-    BaseZ   = GetActorLocation().Z;
-    TargetZ = BaseZ;
-    bElevInterpActive = false;
+	BaseZ = GetActorLocation().Z;
+	TargetZ = BaseZ;
+	bElevInterpActive = false;
 
-    if (!GetVisualMesh())
-    {
-        UE_LOG(LogTemp, Error, TEXT("HexTile: aucun mesh visuel trouvé sur %s"), *GetName());
-        return;
-    }
+	UStaticMeshComponent *Mesh = GetVisualMesh();
+	if (!Mesh)
+	{
+		UE_LOG(LogTemp, Error, TEXT("HexTile: no visual mesh found on %s"), *GetName());
+		return;
+	}
 
-    if (UStaticMeshComponent* Mesh = GetVisualMesh())
-    {
-        // S’assure qu’on peut bouger visuellement la tuile
-        if (Mesh->Mobility != EComponentMobility::Movable)
-            Mesh->SetMobility(EComponentMobility::Movable);
+	// Ensure mesh can move visually
+	if (Mesh->Mobility != EComponentMobility::Movable)
+	{
+		Mesh->SetMobility(EComponentMobility::Movable);
+	}
 
-        if (!DynamicMaterial)
-            DynamicMaterial = Mesh->CreateAndSetMaterialInstanceDynamic(0);
+	// Create MID once
+	if (!DynamicMaterial)
+	{
+		DynamicMaterial = Mesh->CreateAndSetMaterialInstanceDynamic(0);
+	}
 
-        if (DynamicMaterial)
-        {
-            const float V = bIsHighlighted ? 1.0f : 0.0f;
-            DynamicMaterial->SetScalarParameterValue(TEXT("IsHighlighted"), V);
-            UpdateMaterialColor();
-        }
-    }
+	// Initialize visual parameters
+	if (DynamicMaterial)
+	{
+		const float V = bIsHighlighted ? 1.0f : 0.0f;
+		DynamicMaterial->SetScalarParameterValue(PARAM_IsHighlighted, V);
+		UpdateMaterialColor();
+	}
 
-    if (DynamicMaterial && TileType == EHexTileType::Shop)
-    {
-        DynamicMaterial->SetVectorParameterValue(TEXT("BaseColor"), TypeTint_Shop);
-        DynamicMaterial->SetVectorParameterValue(TEXT("EmissiveColor"), TypeTint_Shop);
-        DynamicMaterial->SetScalarParameterValue(TEXT("EmissiveStrength"), 0.5f);
-    }
+	// Optional shop tint
+	if (DynamicMaterial && TileType == EHexTileType::Shop)
+	{
+		DynamicMaterial->SetVectorParameterValue(PARAM_BaseColor, TypeTint_Shop);
+		DynamicMaterial->SetVectorParameterValue(PARAM_EmissiveColor, TypeTint_Shop);
+		DynamicMaterial->SetScalarParameterValue(PARAM_EmissiveStr, 0.5f);
+	}
 }
 
+/** Called every frame */
 void AHexTile::Tick(float DeltaSeconds)
 {
-    Super::Tick(DeltaSeconds);
+	Super::Tick(DeltaSeconds);
 
-    if (!bElevInterpActive)
-        return;
+	if (!bElevInterpActive)
+	{
+		return;
+	}
 
-    FVector Loc = GetActorLocation();
-    const float NewZ = FMath::FInterpTo(Loc.Z, TargetZ, DeltaSeconds, HighlightLerpSpeed);
-    Loc.Z = NewZ;
-    SetActorLocation(Loc);
+	FVector Loc = GetActorLocation();
+	const float NewZ = FMath::FInterpTo(Loc.Z, TargetZ, DeltaSeconds, HighlightLerpSpeed);
+	Loc.Z = NewZ;
+	SetActorLocation(Loc);
 
-    if (FMath::IsNearlyEqual(NewZ, TargetZ, 0.5f))
-    {
-        Loc.Z = TargetZ;
-        SetActorLocation(Loc);
-        bElevInterpActive = false;
-        SetActorTickEnabled(false);
-    }
+	if (FMath::IsNearlyEqual(NewZ, TargetZ, 0.5f))
+	{
+		Loc.Z = TargetZ;
+		SetActorLocation(Loc);
+		bElevInterpActive = false;
+		SetActorTickEnabled(false);
+	}
 }
 
-
-
+/** Bind click and hover events */
 void AHexTile::PostInitializeComponents()
 {
-    Super::PostInitializeComponents();
+	Super::PostInitializeComponents();
 
-    OnClicked.AddDynamic(this, &AHexTile::HandleOnClicked);
-    OnBeginCursorOver.AddDynamic(this, &AHexTile::HandleOnBeginCursorOver);
-    OnEndCursorOver.AddDynamic(this, &AHexTile::HandleOnEndCursorOver);
+	OnClicked.AddDynamic(this, &AHexTile::HandleOnClicked);
+	OnBeginCursorOver.AddDynamic(this, &AHexTile::HandleOnBeginCursorOver);
+	OnEndCursorOver.AddDynamic(this, &AHexTile::HandleOnEndCursorOver);
 }
 
-UStaticMeshComponent* AHexTile::GetVisualMesh()
+/** Returns the main visual mesh of the tile (cached) */
+UStaticMeshComponent *AHexTile::GetVisualMesh()
 {
-    if (IsValid(CachedVisualMesh) && !CachedVisualMesh->IsBeingDestroyed())
-        return CachedVisualMesh;
+	if (IsValid(CachedVisualMesh) && !CachedVisualMesh->IsBeingDestroyed())
+	{
+		return CachedVisualMesh;
+	}
 
-    if (IsValid(TileMesh))
-        return CachedVisualMesh = TileMesh;
+	if (IsValid(TileMesh))
+	{
+		return CachedVisualMesh = TileMesh;
+	}
 
-    TArray<UStaticMeshComponent*> comps;
-    GetComponents<UStaticMeshComponent>(comps);
+	TArray<UStaticMeshComponent *> Comps;
+	GetComponents<UStaticMeshComponent>(Comps);
 
-    if (VisualMeshTag != NAME_None)
-        for (auto* c : comps)
-            if (IsValid(c) && c->ComponentHasTag(VisualMeshTag))
-                return CachedVisualMesh = c;
+	if (VisualMeshTag != NAME_None)
+	{
+		for (auto *C : Comps)
+		{
+			if (IsValid(C) && C->ComponentHasTag(VisualMeshTag))
+			{
+				return CachedVisualMesh = C;
+			}
+		}
+	}
 
-    const FString Wanted = VisualMeshName.ToString();
-    for (auto* c : comps)
-        if (IsValid(c) && c->GetName().Equals(Wanted, ESearchCase::CaseSensitive))
-            return CachedVisualMesh = c;
+	const FString Wanted = VisualMeshName.ToString();
+	for (auto *C : Comps)
+	{
+		if (IsValid(C) && C->GetName().Equals(Wanted, ESearchCase::CaseSensitive))
+		{
+			return CachedVisualMesh = C;
+		}
+	}
 
-    return CachedVisualMesh = (comps.Num() ? comps[0] : nullptr);
+	return CachedVisualMesh = (Comps.Num() ? Comps[0] : nullptr);
 }
 
-void AHexTile::HandleOnClicked(AActor* /*TouchedActor*/, FKey /*ButtonPressed*/)
+/** Called when the tile is clicked */
+void AHexTile::HandleOnClicked(AActor *, FKey)
 {
-    // Si c'est une case Shop => ouvrir la boutique et NE PAS lancer le pathfinding
-    if (TileType == EHexTileType::Shop || bIsShop || ActorHasTag(TEXT("Shop")))
-    {
-        if (ADemoGameMode* GM = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(this)))
-            GM->OpenShopAt(this);
-        return;
-    }
+	if (TileType == EHexTileType::Shop || bIsShop || ActorHasTag(TEXT("Shop")))
+	{
+		if (ADemoGameMode *GM = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(this)))
+		{
+			GM->OpenShopAt(this);
+		}
+		return;
+	}
 
-    // Sinon comportement normal (click-to-move)
-    if (ADemoGameMode* GM = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(this)))
-    {
-        GM->HandleTileClicked(this);
-    }
+	if (ADemoGameMode *GM = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(this)))
+	{
+		GM->HandleTileClicked(this);
+	}
 }
 
-void AHexTile::HandleOnBeginCursorOver(AActor* /*TouchedActor*/)
+/** Called when the mouse cursor enters the tile */
+void AHexTile::HandleOnBeginCursorOver(AActor *)
 {
-    SetHighlighted(true);
+	SetHighlighted(true);
 
-    if (ADemoGameMode* GM = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(this)))
-    {
-        GM->PreviewPathTo(this);
-    }
+	if (ADemoGameMode *GM = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(this)))
+	{
+		GM->PreviewPathTo(this);
+	}
 
-    // Pour le contour, on agit sur le mesh (et pas sur l’acteur)
-    if (TileType == EHexTileType::Shop || bIsShop)
-        if (UStaticMeshComponent* Mesh = GetVisualMesh())
-            Mesh->SetRenderCustomDepth(true);
+	if (TileType == EHexTileType::Shop || bIsShop)
+	{
+		if (UStaticMeshComponent *Mesh = GetVisualMesh())
+		{
+			if (!Mesh->bRenderCustomDepth)
+			{
+				Mesh->SetRenderCustomDepth(true);
+			}
+		}
+	}
 }
 
-void AHexTile::HandleOnEndCursorOver(AActor* /*TouchedActor*/)
+/** Called when the mouse cursor leaves the tile */
+void AHexTile::HandleOnEndCursorOver(AActor *)
 {
-    SetHighlighted(false);
+	SetHighlighted(false);
 
-    if (ADemoGameMode* GM = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(this)))
-    {
-        GM->ClearPreview();
-    }
+	if (ADemoGameMode *GM = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(this)))
+	{
+		GM->ClearPreview();
+	}
 
-    if (TileType == EHexTileType::Shop || bIsShop)
-        if (UStaticMeshComponent* Mesh = GetVisualMesh())
-            Mesh->SetRenderCustomDepth(false);
+	if (TileType == EHexTileType::Shop || bIsShop)
+	{
+		if (UStaticMeshComponent *Mesh = GetVisualMesh())
+		{
+			if (Mesh->bRenderCustomDepth)
+			{
+				Mesh->SetRenderCustomDepth(false);
+			}
+		}
+	}
 }
 
+/** Changes highlight state and triggers visual effects */
 void AHexTile::SetHighlighted(bool bHighlight)
 {
-    if (bIsHighlighted == bHighlight)
-        return;
+	if (bIsHighlighted == bHighlight)
+	{
+		return;
+	}
 
-    bIsHighlighted = bHighlight;
+	bIsHighlighted = bHighlight;
 
-    if (UStaticMeshComponent* Mesh = GetVisualMesh())
-    {
-        if (!DynamicMaterial)
-            DynamicMaterial = Mesh->CreateAndSetMaterialInstanceDynamic(0);
+	// Localize mesh once for this scope
+	UStaticMeshComponent *Mesh = GetVisualMesh();
 
-        if (DynamicMaterial)
-        {
-            DynamicMaterial->SetScalarParameterValue(TEXT("IsHighlighted"), bIsHighlighted ? 1.0f : 0.0f);
-            DynamicMaterial->SetScalarParameterValue(TEXT("EmissiveStrength"), bIsHighlighted ? GlowStrengthOn : GlowStrengthOff);
-            DynamicMaterial->SetVectorParameterValue(TEXT("EmissiveColor"), GlowColor);
-            UpdateMaterialColor();
-        }
+	// Material instance creation if missing
+	if (Mesh && !DynamicMaterial)
+	{
+		DynamicMaterial = Mesh->CreateAndSetMaterialInstanceDynamic(0);
+	}
 
-        Mesh->SetRenderCustomDepth(bIsHighlighted);
-        Mesh->SetCustomDepthStencilValue(1);
-    }
+	// Apply material highlight parameters
+	if (DynamicMaterial)
+	{
+		DynamicMaterial->SetScalarParameterValue(PARAM_IsHighlighted, bIsHighlighted ? 1.0f : 0.0f);
+		DynamicMaterial->SetScalarParameterValue(PARAM_EmissiveStr, bIsHighlighted ? GlowStrengthOn : GlowStrengthOff);
+		DynamicMaterial->SetVectorParameterValue(PARAM_EmissiveColor, GlowColor);
+		UpdateMaterialColor();
+	}
 
-    TargetZ = bIsHighlighted ? (BaseZ + HighlightLiftZ) : BaseZ;
-    bElevInterpActive = true;
-    SetActorTickEnabled(true);
+	// Outline via custom depth (only touch when value changes)
+	if (Mesh)
+	{
+		if (Mesh->bRenderCustomDepth != bIsHighlighted)
+		{
+			Mesh->SetRenderCustomDepth(bIsHighlighted);
+		}
+		Mesh->SetCustomDepthStencilValue(1);
+	}
+
+	// Elevation animation
+	TargetZ = bIsHighlighted ? (BaseZ + HighlightLiftZ) : BaseZ;
+	bElevInterpActive = true;
+	SetActorTickEnabled(true);
 }
 
-
+/** Updates the material color based on highlight state */
 void AHexTile::UpdateMaterialColor()
 {
-    if (!DynamicMaterial)
-        return;
+	if (!DynamicMaterial)
+	{
+		return;
+	}
 
-    const FLinearColor ColorToUse = bIsHighlighted ? HighlightColor : NormalColor;
+	const FLinearColor ColorToUse = bIsHighlighted ? HighlightColor : NormalColor;
 
-    DynamicMaterial->SetVectorParameterValue(TEXT("BaseColor"), ColorToUse);
-    DynamicMaterial->SetVectorParameterValue(TEXT("Color"), ColorToUse);
-    DynamicMaterial->SetVectorParameterValue(TEXT("Albedo"), ColorToUse);
-    DynamicMaterial->SetScalarParameterValue(TEXT("Opacity"), ColorToUse.A);
-    DynamicMaterial->SetVectorParameterValue(TEXT("EmissiveColor"), GlowColor);
-    DynamicMaterial->SetScalarParameterValue(TEXT("EmissiveStrength"), bIsHighlighted ? GlowStrengthOn : GlowStrengthOff);
+	DynamicMaterial->SetVectorParameterValue(PARAM_BaseColor, ColorToUse);
+	DynamicMaterial->SetVectorParameterValue(PARAM_Color, ColorToUse);
+	DynamicMaterial->SetVectorParameterValue(PARAM_Albedo, ColorToUse);
+	DynamicMaterial->SetScalarParameterValue(PARAM_Opacity, ColorToUse.A);
+	DynamicMaterial->SetVectorParameterValue(PARAM_EmissiveColor, GlowColor);
+	DynamicMaterial->SetScalarParameterValue(PARAM_EmissiveStr, bIsHighlighted ? GlowStrengthOn : GlowStrengthOff);
 }
 
+/** Sets the tile type and adjusts visuals if necessary */
 void AHexTile::SetTileType(EHexTileType NewType)
 {
-    TileType = NewType;
+	TileType = NewType;
 
-    if (!DynamicMaterial)
-        if (UStaticMeshComponent* Mesh = GetVisualMesh())
-            DynamicMaterial = Mesh->CreateAndSetMaterialInstanceDynamic(0);
+	UStaticMeshComponent *Mesh = GetVisualMesh();
 
-    if (DynamicMaterial && TileType == EHexTileType::Shop)
-    {
-        DynamicMaterial->SetVectorParameterValue(TEXT("EmissiveColor"), FLinearColor(0.1f, 1.f, 0.1f, 1.f));
-        DynamicMaterial->SetScalarParameterValue(TEXT("EmissiveStrength"), 0.5f);
-    }
+	if (Mesh && !DynamicMaterial)
+	{
+		DynamicMaterial = Mesh->CreateAndSetMaterialInstanceDynamic(0);
+	}
+
+	if (DynamicMaterial && TileType == EHexTileType::Shop)
+	{
+		DynamicMaterial->SetVectorParameterValue(PARAM_EmissiveColor, FLinearColor(0.1f, 1.f, 0.1f, 1.f));
+		DynamicMaterial->SetScalarParameterValue(PARAM_EmissiveStr, 0.5f);
+	}
 }

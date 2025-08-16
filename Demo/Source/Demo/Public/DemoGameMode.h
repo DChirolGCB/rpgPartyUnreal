@@ -3,13 +3,11 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
-#include "HexTile.h"
-#include "HexPawn.h"
-#include "HexGridManager.h"
-#include "HexPathFinder.h"
-#include "PathView.h"
+#include "HexCoordinates.h"
+#include "DemoGameMode.generated.h"
 
-class UUserWidget; // <-- AVANT la classe, au niveau global
+// Forward declarations
+class UUserWidget;
 class AHexTile;
 class UHexGridManager;
 class UHexPathFinder;
@@ -17,9 +15,8 @@ class APathView;
 class AHexPawn;
 class AHexAnimationManager;
 
-#include "DemoGameMode.generated.h"
 /**
- * GameMode central : possède GridManager + PathFinder, gère le click-to-move + preview.
+ * Central GameMode: owns GridManager and PathFinder, drives click-to-move and path preview.
  */
 UCLASS()
 class DEMO_API ADemoGameMode : public AGameModeBase
@@ -29,93 +26,115 @@ class DEMO_API ADemoGameMode : public AGameModeBase
 public:
     ADemoGameMode();
 
-    UFUNCTION(BlueprintCallable, Category = "Hex|Input")
-    void HandleTileClicked(class AHexTile *ClickedTile);
+    /** Click handler entry point from tiles */
+    UFUNCTION(BlueprintCallable, Category="Hex|Input")
+    void HandleTileClicked(AHexTile* ClickedTile);
 
-    UFUNCTION(BlueprintPure, Category = "Hex")
-    UHexGridManager *GetHexGridManager() const { return GridManager; }
+    /** Accessors for managers */
+    UFUNCTION(BlueprintPure, Category="Hex")
+    UHexGridManager* GetHexGridManager() const { return GridManager; }
 
-    UFUNCTION(BlueprintPure, Category = "Hex")
-    UHexPathFinder *GetHexPathFinder() const { return PathFinder; }
+    UFUNCTION(BlueprintPure, Category="Hex")
+    UHexPathFinder* GetHexPathFinder() const { return PathFinder; }
 
-    UFUNCTION(BlueprintCallable, Category = "Hex|Path")
-    void ShowPlannedPathTo(AHexTile *GoalTile);
+    /** Planned-path rendering */
+    UFUNCTION(BlueprintCallable, Category="Hex|Path")
+    void ShowPlannedPathTo(AHexTile* GoalTile);
 
-    UFUNCTION(BlueprintCallable, Category = "Hex|Path")
+    UFUNCTION(BlueprintCallable, Category="Hex|Path")
     void ClearPlannedPath();
-    void PreviewPathTo(class AHexTile *GoalTile);
+
+    /** Hover preview controls */
+    void PreviewPathTo(AHexTile* GoalTile);
     void ClearPreview();
 
-    UFUNCTION(BlueprintCallable, Category = "Hex|PathPreview")
+    UFUNCTION(BlueprintCallable, Category="Hex|PathPreview")
     void SetPreviewEnabled(bool bEnabled);
 
-    UFUNCTION(BlueprintCallable, Category = "Hex|PathPreview")
+    UFUNCTION(BlueprintCallable, Category="Hex|PathPreview")
     void TogglePreview();
 
-    UFUNCTION(BlueprintPure, Category = "Hex|PathPreview")
+    UFUNCTION(BlueprintPure, Category="Hex|PathPreview")
     bool IsPreviewEnabled() const { return bPreviewEnabled; }
 
-    UFUNCTION(BlueprintCallable, Category = "Hex|Gameplay")
-    void OpenShopAt(class AHexTile *ShopTile);
+    /** Open shop UI at a given tile */
+    UFUNCTION(BlueprintCallable, Category="Hex|Gameplay")
+    void OpenShopAt(AHexTile* ShopTile);
 
+    /** Initial axial coordinates for the player pawn */
     UPROPERTY(EditAnywhere, Category="Hex|Start")
     FHexAxialCoordinates StartCoords = FHexAxialCoordinates(0, 6);
 
 protected:
+    /** Engine lifecycle */
     virtual void BeginPlay() override;
-    virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override; // ← AJOUT
+    virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
+    /** Post-login hooks to finish initial snapping */
+    virtual void PostLogin(APlayerController* NewPlayer) override;
+    virtual void Logout(AController* Exiting) override;
+
+    /** Position the pawn on the starting tile */
     void InitializePawnStartTile(const FHexAxialCoordinates& InStartCoords);
 
+    /** Tile class used to spawn the grid */
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Hex|Grid", meta=(AllowAbstract="false"))
-    TSubclassOf<class AHexTile> HexTileClass = nullptr;
+    TSubclassOf<AHexTile> HexTileClass = nullptr;
 
-    UPROPERTY(EditDefaultsOnly, Category = "Hex")
+    /** Grid generation parameters */
+    UPROPERTY(EditDefaultsOnly, Category="Hex")
     int32 GridRadius = 10;
 
-    UPROPERTY(VisibleAnywhere, Category = "Hex")
-    UHexGridManager *GridManager = nullptr;
+    /** Core managers (created/owned by GM) */
+    UPROPERTY(VisibleAnywhere, Category="Hex")
+    UHexGridManager* GridManager = nullptr;
 
-    UPROPERTY(VisibleAnywhere, Category = "Hex")
-    UHexPathFinder *PathFinder = nullptr;
+    UPROPERTY(VisibleAnywhere, Category="Hex")
+    UHexPathFinder* PathFinder = nullptr;
 
+    /** Path debug actor */
     UPROPERTY()
-    APathView *PathView = nullptr;
+    APathView* PathView = nullptr;
 
-    // --- SHOP UI ---
-    UPROPERTY(EditDefaultsOnly, Category = "UI") // ← AJOUT
-    TSubclassOf<UUserWidget> ShopWidgetClass;    // ← AJOUT
+    /** Optional: UI class for shop */
+    UPROPERTY(EditDefaultsOnly, Category="UI")
+    TSubclassOf<UUserWidget> ShopWidgetClass;
 
+    /** Optional PC override through BP */
     UPROPERTY(EditDefaultsOnly, Category="Player")
     TSoftClassPtr<APlayerController> PCClassSoft;
 
+    /** Optional animation manager */
     UPROPERTY()
     AHexAnimationManager* AnimationManager = nullptr;
-    
-    int32 NumConnectedPlayers = 0;
+
 private:
+    /** Preview throttle */
     FTimerHandle PreviewThrottle;
-    TWeakObjectPtr<class AHexTile> PendingGoal;
+
+    /** Hover target and caching to avoid recompute */
+    TWeakObjectPtr<AHexTile> PendingGoal;
     FHexAxialCoordinates LastStart{INT32_MAX, INT32_MAX};
     FHexAxialCoordinates LastGoal{INT32_MAX, INT32_MAX};
 
-    // garder un weak vers le widget pour éviter les double-destroy
+    /** Keep a weak ref to shop widget to avoid double-destroy */
     UPROPERTY()
-    TWeakObjectPtr<UUserWidget> ShopWidget; // ← AJOUT
+    TWeakObjectPtr<UUserWidget> ShopWidget;
 
+    /** Periodic preview update */
     void DoPreviewTick();
-    class AHexPawn *GetPlayerPawnTyped() const;
 
-    UPROPERTY(EditAnywhere, Category = "Hex|PathPreview")
+    /** Typed pawn getter */
+    AHexPawn* GetPlayerPawnTyped() const;
+
+    /** Preview toggle */
+    UPROPERTY(EditAnywhere, Category="Hex|PathPreview")
     bool bPreviewEnabled = true;
 
-    virtual void PostLogin(APlayerController* NewPlayer) override;
-    virtual void Logout(AController* Exiting) override;
-    AHexPawn* SpawnPlayerPawn(APlayerController* ForPlayer) { return nullptr; } // Implement as needed
-    void AssignPlayerVisuals(AHexPawn* Pawn, int32 PlayerIndex) {} // Implement as needed
+    /** Post-login pawn snap retry */
     FTimerHandle SnapRetryHandle;
 
+    /** Try to snap pawn and camera to the start tile */
     UFUNCTION()
     void TrySnapPawnOnce();
-    
 };

@@ -1,38 +1,13 @@
 // HexGridManager.cpp
-
 #include "HexGridManager.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
-#include "DrawDebugHelpers.h"
 #include "HexTile.h"
 #include "Kismet/GameplayStatics.h"
 
-// Deltas voisins en doubled-q: W, NW, NE, E, SE, SW
+// Doubled-q axial neighbor deltas: W, NW, NE, E, SE, SW
 static const FHexAxialCoordinates GDQ6[6] = {
     {-2, 0}, {-2, +1}, {0, +1}, {+2, 0}, {+2, -1}, {0, -1}};
-
-static void DumpNeighborsOf(const UHexGridManager *Grid, const FHexAxialCoordinates &C, const TCHAR *Label)
-{
-    UE_LOG(LogTemp, Warning, TEXT("[Dbg] %s center=(%d,%d)"), Label, C.Q, C.R);
-
-    // Candidats attendus
-    for (int i = 0; i < 6; ++i)
-    {
-        const FHexAxialCoordinates N{C.Q + GDQ6[i].Q, C.R + GDQ6[i].R};
-        const bool bPresent = (Grid && Grid->GetHexTileAt(N) != nullptr);
-        UE_LOG(LogTemp, Warning, TEXT("[Dbg]  cand %d -> (%d,%d) present=%d"), i, N.Q, N.R, bPresent ? 1 : 0);
-    }
-
-    // Ce que renvoie réellement GetNeighbors
-    if (Grid)
-    {
-        TArray<FHexAxialCoordinates> Out = Grid->GetNeighbors(C);
-        FString S = FString::JoinBy(Out, TEXT(" "),
-                                    [](const FHexAxialCoordinates &X)
-                                    { return FString::Printf(TEXT("(%d,%d)"), X.Q, X.R); });
-        UE_LOG(LogTemp, Warning, TEXT("[Dbg]  GetNeighbors -> %s"), *S);
-    }
-}
 
 UHexGridManager::UHexGridManager()
 {
@@ -48,32 +23,31 @@ void UHexGridManager::InitializeGrid(int32 Radius, TSubclassOf<AHexTile> TileCla
 
 void UHexGridManager::RebuildGrid()
 {
-    // 1) Détruire l'existant
+    // Destroy existing tiles
     for (auto &Kvp : TilesMap)
     {
         if (AHexTile *T = Kvp.Value.Get())
-        {
             if (IsValid(T) && !T->IsActorBeingDestroyed())
                 T->Destroy();
-        }
     }
     TilesMap.Empty();
 
-    // 2) Vérifs
     UWorld *World = GetWorld();
     if (!World || !*HexTileClass)
     {
-        UE_LOG(LogTemp, Error, TEXT("RebuildGrid: World or HexTileClass invalid"));
+        UE_LOG(LogTemp, Error, TEXT("[HexGrid] RebuildGrid: World or HexTileClass invalid"));
         return;
     }
 
-    // 3) Origine par défaut
+    // Set default origin if not set
     if (GridOrigin.IsNearlyZero() && GetOwner())
+    {
         GridOrigin = GetOwner()->GetActorLocation();
+    }
 
-    UE_LOG(LogTemp, Warning, TEXT("Rebuilding hex grid (Radius=%d, TileSize=%.1f)"), GridRadius, TileSize);
+    UE_LOG(LogTemp, Warning, TEXT("[HexGrid] Rebuild: Radius=%d, TileSize=%.1f"), GridRadius, TileSize);
 
-    // 4) Boucle de génération telle que tu l’utilises déjà (indices affichage Col/Row = Q/R)
+    // Generate hex tiles (axial ring by ring)
     for (int32 q = -GridRadius; q <= GridRadius; ++q)
     {
         const int32 rMin = FMath::Max(-GridRadius, -q - GridRadius);
@@ -92,7 +66,7 @@ void UHexGridManager::RebuildGrid()
             if (!Tile)
                 continue;
 
-            const FHexAxialCoordinates Axial = MapSpawnIndexToAxial(q, r); // <- mapping corrigé
+            const FHexAxialCoordinates Axial = MapSpawnIndexToAxial(q, r);
             Tile->SetAxialCoordinates(Axial);
 #if WITH_EDITOR
             Tile->SetActorLabel(FString::Printf(TEXT("Hex (%d,%d)"), Axial.Q, Axial.R));
@@ -100,11 +74,8 @@ void UHexGridManager::RebuildGrid()
             TilesMap.Add(Axial, TWeakObjectPtr<AHexTile>(Tile));
         }
     }
-    DumpNeighborsOf(this, FHexAxialCoordinates{0, 0}, TEXT("AfterRebuild"));
-    DumpNeighborsOf(this, FHexAxialCoordinates{-8, -1}, TEXT("AfterRebuild"));
-    ApplySpecialTiles();
 
-    // Optionnel
+    ApplySpecialTiles();
     BuildWorldNeighbors();
 }
 
@@ -121,14 +92,13 @@ void UHexGridManager::ApplySpecialTiles()
         }
         else
         {
-            UE_LOG(LogTemp, Warning, TEXT("[Hex] Shop coord inconnue (%d,%d)"), C.Q, C.R);
+            UE_LOG(LogTemp, Warning, TEXT("[HexGrid] Unknown shop coord (%d,%d)"), C.Q, C.R);
         }
     }
 }
 
 FVector UHexGridManager::ComputeTileSpawnPosition(int32 Q, int32 R) const
 {
-    // Placement monde EXISTANT conservé
     const float HexWidth = TileSize * 2.0f;
     const float HexHeight = TileSize * YSpacingFactor;
     const float XOffset = Q * HexWidth * XSpacingFactor;
@@ -142,8 +112,6 @@ FVector UHexGridManager::ComputeTileSpawnPosition(int32 Q, int32 R) const
     float FinalZ = GridOrigin.Z;
 
     const FVector Base(FinalX, FinalY, FinalZ);
-
-    // Trace vertical pour le Z
     const FVector Start = Base + FVector(0, 0, TraceHeight);
     const FVector End = Base - FVector(0, 0, TraceDepth);
 
@@ -153,6 +121,7 @@ FVector UHexGridManager::ComputeTileSpawnPosition(int32 Q, int32 R) const
         Params.AddIgnoredActor(Owner);
 
     bool bHit = GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, Params);
+
     if (!bHit)
     {
         FCollisionObjectQueryParams Obj;
@@ -160,23 +129,17 @@ FVector UHexGridManager::ComputeTileSpawnPosition(int32 Q, int32 R) const
         Obj.AddObjectTypesToQuery(ECC_WorldDynamic);
         bHit = GetWorld()->LineTraceSingleByObjectType(Hit, Start, End, Obj, Params);
     }
-    /**
-    #if WITH_EDITOR
-        if (bDebugTrace)
-        {
-            DrawDebugLine(GetWorld(), Start, End, bHit ? FColor::Green : FColor::Red, false, 5.f, 0, 2.f);
-            if (bHit) DrawDebugPoint(GetWorld(), Hit.Location, 12.f, FColor::Yellow, false, 5.f);
-        }
-    #endif
-    */
+
     if (bHit)
+    {
         FinalZ = Hit.Location.Z + TileZOffset;
+    }
+
     return FVector(FinalX, FinalY, FinalZ);
 }
 
 bool UHexGridManager::TryComputeTileSpawnPosition(int32 Q, int32 R, FVector &OutLocation) const
 {
-    // Placement monde EXISTANT conservé
     const float HexWidth = TileSize * 2.0f;
     const float HexHeight = TileSize * YSpacingFactor;
     const float XOffset = Q * HexWidth * XSpacingFactor;
@@ -199,6 +162,7 @@ bool UHexGridManager::TryComputeTileSpawnPosition(int32 Q, int32 R, FVector &Out
         Params.AddIgnoredActor(Owner);
 
     bool bHit = GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, Params);
+
     if (!bHit)
     {
         FCollisionObjectQueryParams Obj;
@@ -206,16 +170,7 @@ bool UHexGridManager::TryComputeTileSpawnPosition(int32 Q, int32 R, FVector &Out
         Obj.AddObjectTypesToQuery(ECC_WorldDynamic);
         bHit = GetWorld()->LineTraceSingleByObjectType(Hit, Start, End, Obj, Params);
     }
-    /*
-    #if WITH_EDITOR
-        if (bDebugTrace)
-        {
-            DrawDebugLine(GetWorld(), Start, End, bHit ? FColor::Green : FColor::Red, false, 5.f, 0, 2.f);
-            if (bHit)
-                DrawDebugPoint(GetWorld(), Hit.Location, 12.f, FColor::Yellow, false, 5.f);
-        }
-    #endif
-     */
+
     if (!bHit)
     {
         UE_LOG(LogTemp, Verbose, TEXT("[HexGrid] (%d,%d): no ground hit"), Q, R);
@@ -242,42 +197,45 @@ bool UHexGridManager::TryComputeTileSpawnPosition(int32 Q, int32 R, FVector &Out
     return true;
 }
 
-// -------- Mapping Offset -> Axial standard -> Doubled-Q --------
-
+// floor(x/2) for signed ints
 static FORCEINLINE int32 FloorDiv2_Int(int32 x)
 {
-    // floor(x/2) pour entiers signés
     return (x >= 0) ? (x >> 1) : -((-x + 1) >> 1);
 }
 
 FHexAxialCoordinates UHexGridManager::MapSpawnIndexToAxial(int32 Col, int32 Row) const
 {
-    // Col/Row = indices utilisés par TON placement existant
-    // Convertit Offset → axial standard, puis axial → doubled-q
-
     int32 q_ax = 0;
     int32 r_ax = 0;
 
     if (bOffsetOnQ)
     {
-        // Colonnes décalées (pointy-top). Odd-Q
-        // axial: q = col ; r = row - floor(col/2)
+        // Odd-Q (pointy-top): q=col; r=row - floor(col/2)
         q_ax = Col;
         r_ax = Row - FloorDiv2_Int(Col);
     }
     else
     {
-        // Lignes décalées (flat-top). Odd-R
-        // axial: q = col - floor(row/2) ; r = row
+        // Odd-R (flat-top): q=col - floor(row/2); r=row
         q_ax = Col - FloorDiv2_Int(Row);
         r_ax = Row;
     }
 
-    // Doubled-Q: q' = 2*q ; r' = r
-    return FHexAxialCoordinates{q_ax * 2, r_ax};
-}
+    // Optional label tweaks (invert/swap); affects labels only
+    if (bInvertQAxisForLabels)
+        q_ax = -q_ax;
+    if (bInvertRAxisForLabels)
+        r_ax = -r_ax;
+    if (bSwapQRForLabels)
+        Swap(q_ax, r_ax);
 
-// ---------------------------------------------------------------
+    // Doubled-q labeling if requested
+    if (bUseDoubledQForLabels)
+    {
+        return FHexAxialCoordinates{q_ax * 2, r_ax};
+    }
+    return FHexAxialCoordinates{q_ax, r_ax};
+}
 
 AHexTile *UHexGridManager::GetHexTileAt(const FHexAxialCoordinates &Coords) const
 {
@@ -290,23 +248,18 @@ TArray<FHexAxialCoordinates> UHexGridManager::GetNeighbors(const FHexAxialCoordi
 {
     TArray<FHexAxialCoordinates> Out;
     Out.Reserve(6);
+
     for (int i = 0; i < 6; ++i)
     {
         const FHexAxialCoordinates N{C.Q + GDQ6[i].Q, C.R + GDQ6[i].R};
         if (GetHexTileAt(N))
             Out.Add(N);
-
-        // Log ciblé sur la tuile problématique
-        if (C.Q == -8 && C.R == -1)
-        {
-            const bool bHas = GetHexTileAt(N) != nullptr;
-            UE_LOG(LogTemp, Warning, TEXT("[Dbg] GetNeighbors@(-8,-1) try (%d,%d) -> %d"), N.Q, N.R, bHas ? 1 : 0);
-        }
     }
     return Out;
 }
 
-int32 UHexGridManager::AxialDistance(const FHexAxialCoordinates &A, const FHexAxialCoordinates &B) const
+int32 UHexGridManager::AxialDistance(const FHexAxialCoordinates &A,
+                                     const FHexAxialCoordinates &B) const
 {
     const int32 dq = FMath::Abs(A.Q - B.Q);
     const int32 dr = FMath::Abs(A.R - B.R);
@@ -343,7 +296,7 @@ void UHexGridManager::BuildWorldNeighbors()
         {
             if (ItB.Key == AKey)
                 continue;
-            const float d2 = (ItB.Value - APos).SizeSquared2D(); // float sûr
+            const float d2 = (ItB.Value - APos).SizeSquared2D();
             D.Add({ItB.Key, d2});
         }
 
@@ -360,11 +313,12 @@ void UHexGridManager::BuildWorldNeighbors()
     }
 
 #if !UE_BUILD_SHIPPING
-    UE_LOG(LogTemp, Warning, TEXT("[Hex] WorldNeighbors built for %d tiles"), WorldNeighbors.Num());
+    UE_LOG(LogTemp, Warning, TEXT("[HexGrid] WorldNeighbors built for %d tiles"), WorldNeighbors.Num());
 #endif
 }
 
-void UHexGridManager::GetNeighborsByWorld(const FHexAxialCoordinates &From, TArray<FHexAxialCoordinates> &Out) const
+void UHexGridManager::GetNeighborsByWorld(const FHexAxialCoordinates &From,
+                                          TArray<FHexAxialCoordinates> &Out) const
 {
     if (const TArray<FHexAxialCoordinates> *Found = WorldNeighbors.Find(From))
         Out = *Found;
@@ -374,7 +328,6 @@ void UHexGridManager::GetNeighborsByWorld(const FHexAxialCoordinates &From, TArr
 
 void UHexGridManager::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-    // Évite déréférencer des acteurs pendant teardown
     TilesMap.Empty();
     WorldNeighbors.Empty();
     Super::EndPlay(EndPlayReason);
@@ -382,7 +335,6 @@ void UHexGridManager::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 void UHexGridManager::BeginDestroy()
 {
-    // Sécurité hot-reload / editor
     TilesMap.Empty();
     WorldNeighbors.Empty();
     Super::BeginDestroy();

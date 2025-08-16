@@ -1,31 +1,36 @@
 // DemoGameMode.cpp
-
 #include "DemoGameMode.h"
 #include "Blueprint/UserWidget.h"
 #include "Algo/Reverse.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
-#include "HexPawn.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
-#include "HexAnimationManager.h"
 #include "UObject/ConstructorHelpers.h"
+
+#include "HexPawn.h"
+#include "HexAnimationManager.h"
+#include "HexGridManager.h"
+#include "HexPathFinder.h"
+#include "HexTile.h"
+#include "PathView.h"
+
+namespace
+{
+    constexpr float kSnapRetryPeriodSec   = 0.05f;
+    constexpr float kPreviewThrottleSec   = 0.10f;
+}
 
 namespace HexBridge
 {
-    // BFS basé sur les voisins fournis par la grille (axial standard et tuiles existantes)
-    static bool BuildBridge(UHexGridManager *GM,
-                            const FHexAxialCoordinates &From,
-                            const FHexAxialCoordinates &To,
-                            TArray<FHexAxialCoordinates> &OutChain)
+    /** BFS across existing tiles to bridge non-adjacent steps */
+    static bool BuildBridge(UHexGridManager* GM,
+                            const FHexAxialCoordinates& From,
+                            const FHexAxialCoordinates& To,
+                            TArray<FHexAxialCoordinates>& OutChain)
     {
-        if (!GM)
-            return false;
-        if (From == To)
-        {
-            OutChain.Reset();
-            return true;
-        }
+        if (!GM) return false;
+        if (From == To) { OutChain.Reset(); return true; }
 
         TQueue<FHexAxialCoordinates> Open;
         TMap<FHexAxialCoordinates, FHexAxialCoordinates> Parent;
@@ -35,44 +40,33 @@ namespace HexBridge
 
         bool bFound = false;
         FHexAxialCoordinates Cur;
+
         while (Open.Dequeue(Cur))
         {
             const TArray<FHexAxialCoordinates> Neigh = GM->GetNeighbors(Cur);
-            for (const FHexAxialCoordinates &N : Neigh)
+            for (const FHexAxialCoordinates& N : Neigh)
             {
-                if (Parent.Contains(N))
-                    continue;
+                if (Parent.Contains(N)) continue;
                 Parent.Add(N, Cur);
-                if (N == To)
-                {
-                    bFound = true;
-                    Cur = N;
-                    break;
-                }
+                if (N == To) { bFound = true; Cur = N; break; }
                 Open.Enqueue(N);
             }
-            if (bFound)
-                break;
+            if (bFound) break;
         }
 
-        if (!bFound)
-            return false;
+        if (!bFound) return false;
 
         TArray<FHexAxialCoordinates> Chain;
-        for (FHexAxialCoordinates C = Cur; !(C == From); C = Parent[C])
-        {
-            Chain.Add(C);
-        }
+        for (FHexAxialCoordinates C = Cur; !(C == From); C = Parent[C]) { Chain.Add(C); }
         Algo::Reverse(Chain);
         OutChain = MoveTemp(Chain);
         return true;
     }
 
-    // Force Path à n’avoir que des steps adjacents ; insère les intermédiaires manquants
-    static void BridgePathUsingExistingTiles(UHexGridManager *GM, TArray<FHexAxialCoordinates> &Path)
+    /** Enforce adjacency by inserting intermediate tiles using BFS on existing tiles */
+    static void BridgePathUsingExistingTiles(UHexGridManager* GM, TArray<FHexAxialCoordinates>& Path)
     {
-        if (!GM || Path.Num() < 2)
-            return;
+        if (!GM || Path.Num() < 2) return;
 
         TArray<FHexAxialCoordinates> Out;
         Out.Reserve(Path.Num() * 2);
@@ -81,14 +75,10 @@ namespace HexBridge
         for (int32 i = 1; i < Path.Num(); ++i)
         {
             const FHexAxialCoordinates From = Out.Last();
-            const FHexAxialCoordinates To = Path[i];
+            const FHexAxialCoordinates To   = Path[i];
 
             const bool bAdjacent = GM->GetNeighbors(From).Contains(To);
-            if (bAdjacent)
-            {
-                Out.Add(To);
-                continue;
-            }
+            if (bAdjacent) { Out.Add(To); continue; }
 
             TArray<FHexAxialCoordinates> Bridge;
             if (BuildBridge(GM, From, To, Bridge) && Bridge.Num() > 0)
@@ -98,7 +88,7 @@ namespace HexBridge
             else
             {
                 UE_LOG(LogTemp, Warning, TEXT("[Bridge] Impossible de relier (%d,%d)->(%d,%d) via voisins — saut ignoré"),
-                       From.Q, From.R, To.Q, To.R);
+                    From.Q, From.R, To.Q, To.R);
             }
         }
 
@@ -108,51 +98,48 @@ namespace HexBridge
 
 namespace Hex
 {
-    // Doubled-Q pour matcher la grille
+    /** Doubled-Q neighbor deltas */
     static const FHexAxialCoordinates NeighborDirs[6] =
-        {
-            {+2, 0}, {+1, -1}, {-1, -1}, {-2, 0}, {-1, +1}, {+1, +1}};
-
-    static int32 HexDistance(const FHexAxialCoordinates &A, const FHexAxialCoordinates &B)
     {
-        const int32 dq = FMath::Abs(A.Q - B.Q);
-        const int32 dr = FMath::Abs(A.R - B.R);
+        {+2, 0}, {+1, -1}, {-1, -1}, {-2, 0}, {-1, +1}, {+1, +1}
+    };
+
+    static int32 HexDistance(const FHexAxialCoordinates& A, const FHexAxialCoordinates& B)
+    {
+        const int32 dq   = FMath::Abs(A.Q - B.Q);
+        const int32 dr   = FMath::Abs(A.R - B.R);
         const int32 diag = FMath::Min(dq / 2, dr);
         const int32 remQ = dq - diag * 2;
         const int32 remR = dr - diag;
         return diag + remR + remQ / 2;
     }
 
-    static bool AreNeighbors(const FHexAxialCoordinates &A, const FHexAxialCoordinates &B)
+    static bool AreNeighbors(const FHexAxialCoordinates& A, const FHexAxialCoordinates& B)
     {
-        for (const auto &D : NeighborDirs)
+        for (const auto& D : NeighborDirs)
         {
-            if (A.Q + D.Q == B.Q && A.R + D.R == B.R)
-                return true;
+            if (A.Q + D.Q == B.Q && A.R + D.R == B.R) return true;
         }
         return false;
     }
 
-    static FHexAxialCoordinates StepToward(const FHexAxialCoordinates &From, const FHexAxialCoordinates &To)
+    static FHexAxialCoordinates StepToward(const FHexAxialCoordinates& From, const FHexAxialCoordinates& To)
     {
-        int32 BestIdx = 0, BestDist = TNumericLimits<int32>::Max();
+        int32 BestIdx = 0;
+        int32 BestDist = TNumericLimits<int32>::Max();
         for (int32 i = 0; i < 6; ++i)
         {
             FHexAxialCoordinates C{From.Q + NeighborDirs[i].Q, From.R + NeighborDirs[i].R};
             const int32 Dist = HexDistance(C, To);
-            if (Dist < BestDist)
-            {
-                BestDist = Dist;
-                BestIdx = i;
-            }
+            if (Dist < BestDist) { BestDist = Dist; BestIdx = i; }
         }
         return {From.Q + NeighborDirs[BestIdx].Q, From.R + NeighborDirs[BestIdx].R};
     }
 
-    static void SanitizePath(TArray<FHexAxialCoordinates> &Path)
+    /** Expand a path by inserting steps until all hops are adjacent (guarded) */
+    static void SanitizePath(TArray<FHexAxialCoordinates>& Path)
     {
-        if (Path.Num() < 2)
-            return;
+        if (Path.Num() < 2) return;
 
         TArray<FHexAxialCoordinates> Out;
         Out.Reserve(Path.Num() * 2);
@@ -160,7 +147,7 @@ namespace Hex
 
         for (int32 i = 1; i < Path.Num(); ++i)
         {
-            FHexAxialCoordinates Cur = Out.Last();
+            FHexAxialCoordinates Cur    = Out.Last();
             const FHexAxialCoordinates Target = Path[i];
 
             int32 Guard = 0;
@@ -177,7 +164,7 @@ namespace Hex
             if (Jump > 1)
             {
                 UE_LOG(LogTemp, Warning, TEXT("[SanitizePath] Jump=%d entre (%d,%d)->(%d,%d)"),
-                       Jump, Out[Out.Num() - 2].Q, Out[Out.Num() - 2].R, Out.Last().Q, Out.Last().R);
+                    Jump, Out[Out.Num() - 2].Q, Out[Out.Num() - 2].R, Out.Last().Q, Out.Last().R);
             }
 #endif
         }
@@ -190,10 +177,10 @@ void ADemoGameMode::PostLogin(APlayerController* NewPlayer)
 {
     Super::PostLogin(NewPlayer);
 
-    // Lance un retry toutes 0.05s jusqu’à snap réussi
+    // Retry until snap succeeds
     GetWorldTimerManager().SetTimer(
         SnapRetryHandle, this, &ADemoGameMode::TrySnapPawnOnce,
-        0.05f, /*bLoop=*/true, /*FirstDelay=*/0.0f);
+        kSnapRetryPeriodSec, /*bLoop=*/true, /*FirstDelay=*/0.0f);
 }
 
 void ADemoGameMode::Logout(AController* Exiting)
@@ -205,7 +192,6 @@ void ADemoGameMode::Logout(AController* Exiting)
             AnimationManager->UnregisterPlayer(Pawn);
         }
     }
-    
     Super::Logout(Exiting);
 }
 
@@ -214,7 +200,7 @@ ADemoGameMode::ADemoGameMode()
     DefaultPawnClass = AHexPawn::StaticClass();
 
     GridManager = CreateDefaultSubobject<UHexGridManager>(TEXT("HexGridManager"));
-    PathFinder = CreateDefaultSubobject<UHexPathFinder>(TEXT("HexPathFinder"));
+    PathFinder  = CreateDefaultSubobject<UHexPathFinder>(TEXT("HexPathFinder"));
 
     static ConstructorHelpers::FClassFinder<AHexTile> TileBP(TEXT("/Game/Blueprints/BP_HexTile"));
     if (TileBP.Succeeded())
@@ -226,6 +212,7 @@ ADemoGameMode::ADemoGameMode()
 void ADemoGameMode::BeginPlay()
 {
     Super::BeginPlay();
+
     if (!GridManager || !GridManager->IsRegistered())
     {
         GridManager = NewObject<UHexGridManager>(this, TEXT("HexGridManager_RT"));
@@ -239,56 +226,54 @@ void ADemoGameMode::BeginPlay()
         PathFinder->RegisterComponent();
     }
 
-    UWorld *W = GetWorld();
-    if (!W)
-        return;
+    UWorld* W = GetWorld();
+    if (!W) return;
 
-    // Pas de taf hors monde de jeu
     const bool bIsGame = (W->IsGameWorld() || W->WorldType == EWorldType::PIE || W->WorldType == EWorldType::Game);
     if (!bIsGame || IsRunningCommandlet() || HasAnyFlags(RF_ClassDefaultObject))
     {
         return;
     }
 
-    // après avoir créé/assuré GridManager et PathFinder
     if (PathFinder && GridManager)
     {
         PathFinder->Init(GridManager);
         UE_LOG(LogTemp, Warning, TEXT("[PathFinder] Bound Grid=%s"), *GetNameSafe(GridManager));
     }
 
-    // Optionnel : forcer le PC depuis un SoftClass si différent
-    // Optionnel : forcer le PC depuis un SoftClass si défini dans le BP de GameMode
+    // Optional PC override coming from BP
     if (!PCClassSoft.IsNull())
     {
-        if (UClass *PCCls = PCClassSoft.LoadSynchronous())
+        if (UClass* PCCls = PCClassSoft.LoadSynchronous())
         {
             PlayerControllerClass = PCCls;
         }
     }
 
-    if (APlayerController *PC0 = GetWorld()->GetFirstPlayerController())
+    if (APlayerController* PC0 = GetWorld()->GetFirstPlayerController())
+    {
         UE_LOG(LogTemp, Warning, TEXT("PC actif: %s"), *PC0->GetClass()->GetName());
+    }
     UE_LOG(LogTemp, Warning, TEXT("GM actif: %s"), *GetClass()->GetName());
 
-    APlayerController *OldPC = GetWorld()->GetFirstPlayerController();
+    APlayerController* OldPC = GetWorld()->GetFirstPlayerController();
     if (OldPC)
     {
         UE_LOG(LogTemp, Warning, TEXT("PC actif: %s (attendu: %s)"),
-               *OldPC->GetClass()->GetName(),
-               PlayerControllerClass ? *PlayerControllerClass->GetName() : TEXT("(none)"));
+            *OldPC->GetClass()->GetName(),
+            PlayerControllerClass ? *PlayerControllerClass->GetName() : TEXT("(none)"));
     }
 
-    // Remplacement propre si le niveau n'a pas pris la bonne classe de PC
+    // Replace PC if level did not take the right class
     if (PlayerControllerClass && OldPC && !OldPC->IsA(PlayerControllerClass))
     {
-        APawn *Pawn = OldPC->GetPawn();
+        APawn* Pawn = OldPC->GetPawn();
 
         FActorSpawnParameters Params;
         Params.Instigator = Pawn;
         Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
-        APlayerController *NewPC = GetWorld()->SpawnActor<APlayerController>(
+        APlayerController* NewPC = GetWorld()->SpawnActor<APlayerController>(
             PlayerControllerClass,
             Pawn ? Pawn->GetActorLocation() : FVector::ZeroVector,
             Pawn ? Pawn->GetActorRotation() : FRotator::ZeroRotator,
@@ -303,7 +288,7 @@ void ADemoGameMode::BeginPlay()
                 NewPC->Possess(Pawn);
             }
             UE_LOG(LogTemp, Warning, TEXT("PC remplacé: %s -> %s"),
-                   *OldPC->GetClass()->GetName(), *NewPC->GetClass()->GetName());
+                *OldPC->GetClass()->GetName(), *NewPC->GetClass()->GetName());
             OldPC->Destroy();
         }
         else
@@ -323,18 +308,17 @@ void ADemoGameMode::BeginPlay()
         return;
     }
 
-    // Génération de la grille
+    // Build grid
     GridManager->InitializeGrid(GridRadius, HexTileClass);
     PathFinder->Init(GridManager);
 
-    // Log de vérif
     UE_LOG(LogTemp, Warning, TEXT("DemoGameMode BeginPlay : grille générée"));
 
-    // Coordonnées de départ (conforme à tes tests précédents)
+    // Initial pawn tile
     InitializePawnStartTile(FHexAxialCoordinates(0, 6));
 
-    // Setup souris & PathView
-    if (APlayerController *PC = UGameplayStatics::GetPlayerController(this, 0))
+    // Mouse and UI setup
+    if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
     {
         PC->bShowMouseCursor = true;
         PC->bEnableClickEvents = true;
@@ -352,53 +336,50 @@ void ADemoGameMode::BeginPlay()
     }
 
     UE_LOG(LogTemp, Warning, TEXT("PC=%s  Pawn=%s  ViewTarget=%s"),
-    *GetNameSafe(GetWorld()->GetFirstPlayerController()),
-    *GetNameSafe(GetWorld()->GetFirstPlayerController() ? GetWorld()->GetFirstPlayerController()->GetPawn() : nullptr),
-    *GetNameSafe(GetWorld()->GetFirstPlayerController() ? GetWorld()->GetFirstPlayerController()->GetViewTarget() : nullptr));
-
+        *GetNameSafe(GetWorld()->GetFirstPlayerController()),
+        *GetNameSafe(GetWorld()->GetFirstPlayerController() ? GetWorld()->GetFirstPlayerController()->GetPawn() : nullptr),
+        *GetNameSafe(GetWorld()->GetFirstPlayerController() ? GetWorld()->GetFirstPlayerController()->GetViewTarget() : nullptr));
 }
 
-void ADemoGameMode::HandleTileClicked(AHexTile *ClickedTile)
+void ADemoGameMode::HandleTileClicked(AHexTile* ClickedTile)
 {
-    if (!ClickedTile || !GridManager || !PathFinder)
-        return;
+    if (!ClickedTile || !GridManager || !PathFinder) return;
 
-    // Shop ? -> ouvrir UI et ne PAS pathfinder
+    // Shop tiles open UI and skip pathfinding
     if (ClickedTile->GetTileType() == EHexTileType::Shop || ClickedTile->bIsShop || ClickedTile->ActorHasTag(TEXT("Shop")))
     {
         OpenShopAt(ClickedTile);
         return;
     }
 
-    AHexPawn *HexP = GetPlayerPawnTyped();
+    AHexPawn* HexP = GetPlayerPawnTyped();
     if (!HexP)
     {
         UE_LOG(LogTemp, Error, TEXT("HandleTileClicked: Pawn n'est pas un AHexPawn"));
         return;
     }
 
-    AHexTile *FromTile = HexP->GetCurrentTile();
+    AHexTile* FromTile = HexP->GetCurrentTile();
     if (!FromTile)
     {
         HexP->SetCurrentTile(ClickedTile);
         HexP->SetActorLocation(ClickedTile->GetActorLocation());
         UE_LOG(LogTemp, Warning, TEXT("Affectation initiale de la tuile du Pawn -> (%d,%d)"),
-               ClickedTile->GetAxialCoordinates().Q, ClickedTile->GetAxialCoordinates().R);
+            ClickedTile->GetAxialCoordinates().Q, ClickedTile->GetAxialCoordinates().R);
         return;
     }
 
     const FHexAxialCoordinates Start = FromTile->GetAxialCoordinates();
-    const FHexAxialCoordinates Goal = ClickedTile->GetAxialCoordinates();
-    if (Start == Goal)
-        return;
+    const FHexAxialCoordinates Goal  = ClickedTile->GetAxialCoordinates();
+    if (Start == Goal) return;
 
     UE_LOG(LogTemp, Warning, TEXT("A*: Start=(%d,%d) Goal=(%d,%d)"),
-           Start.Q, Start.R, Goal.Q, Goal.R);
+        Start.Q, Start.R, Goal.Q, Goal.R);
     UE_LOG(LogTemp, Warning, TEXT("A*: StartExists=%d GoalExists=%d StartNeigh=%d GoalNeigh=%d"),
-           GridManager->GetHexTileAt(Start) != nullptr,
-           GridManager->GetHexTileAt(Goal) != nullptr,
-           GridManager->GetNeighbors(Start).Num(),
-           GridManager->GetNeighbors(Goal).Num());
+        GridManager->GetHexTileAt(Start) != nullptr,
+        GridManager->GetHexTileAt(Goal)  != nullptr,
+        GridManager->GetNeighbors(Start).Num(),
+        GridManager->GetNeighbors(Goal).Num());
 
     TArray<FHexAxialCoordinates> Path = PathFinder->FindPath(Start, Goal);
     HexBridge::BridgePathUsingExistingTiles(GridManager, Path);
@@ -412,7 +393,7 @@ void ADemoGameMode::HandleTileClicked(AHexTile *ClickedTile)
     HexP->StartPathFollowing(Path, GridManager);
 }
 
-void ADemoGameMode::InitializePawnStartTile(const FHexAxialCoordinates &InStartCoords)
+void ADemoGameMode::InitializePawnStartTile(const FHexAxialCoordinates& InStartCoords)
 {
     if (!GridManager)
     {
@@ -420,19 +401,19 @@ void ADemoGameMode::InitializePawnStartTile(const FHexAxialCoordinates &InStartC
         return;
     }
 
-    AHexTile *Tile = GridManager->GetHexTileAt(InStartCoords);
+    AHexTile* Tile = GridManager->GetHexTileAt(InStartCoords);
     if (!Tile)
     {
         UE_LOG(LogTemp, Error, TEXT("InitializePawnStartTile : pas de tuile à (%d,%d)"),
-               InStartCoords.Q, InStartCoords.R);
+            InStartCoords.Q, InStartCoords.R);
         return;
     }
 
-    if (AHexPawn *HexP = GetPlayerPawnTyped())
+    if (AHexPawn* HexP = GetPlayerPawnTyped())
     {
         HexP->SetCurrentTile(Tile);
         UE_LOG(LogTemp, Warning, TEXT("Pawn démarré sur (%d,%d)"),
-               InStartCoords.Q, InStartCoords.R);
+            InStartCoords.Q, InStartCoords.R);
     }
     else
     {
@@ -440,13 +421,12 @@ void ADemoGameMode::InitializePawnStartTile(const FHexAxialCoordinates &InStartC
     }
 }
 
-void ADemoGameMode::ShowPlannedPathTo(AHexTile *GoalTile)
+void ADemoGameMode::ShowPlannedPathTo(AHexTile* GoalTile)
 {
-    if (!GridManager || !PathFinder || !GoalTile || !PathView)
-        return;
+    if (!GridManager || !PathFinder || !GoalTile || !PathView) return;
 
-    AHexPawn *P = GetPlayerPawnTyped();
-    AHexTile *StartTile = P ? P->GetCurrentTile() : nullptr; // <-- FIX
+    AHexPawn* P = GetPlayerPawnTyped();
+    AHexTile* StartTile = P ? P->GetCurrentTile() : nullptr;
     if (!StartTile)
     {
         PathView->Clear();
@@ -454,7 +434,7 @@ void ADemoGameMode::ShowPlannedPathTo(AHexTile *GoalTile)
     }
 
     const FHexAxialCoordinates Start = StartTile->GetAxialCoordinates();
-    const FHexAxialCoordinates Goal = GoalTile->GetAxialCoordinates();
+    const FHexAxialCoordinates Goal  = GoalTile->GetAxialCoordinates();
 
     TArray<FHexAxialCoordinates> AxialPath = PathFinder->FindPath(Start, Goal);
     if (AxialPath.Num() < 2)
@@ -465,8 +445,8 @@ void ADemoGameMode::ShowPlannedPathTo(AHexTile *GoalTile)
 
     TArray<FVector> Points;
     Points.Reserve(AxialPath.Num());
-    for (const auto &C : AxialPath)
-        if (AHexTile *T = GridManager->GetHexTileAt(C))
+    for (const auto& C : AxialPath)
+        if (AHexTile* T = GridManager->GetHexTileAt(C))
             Points.Add(T->GetActorLocation());
 
     PathView->Show(Points);
@@ -474,32 +454,28 @@ void ADemoGameMode::ShowPlannedPathTo(AHexTile *GoalTile)
 
 void ADemoGameMode::ClearPlannedPath()
 {
-    if (PathView)
-        PathView->Clear();
+    if (PathView) PathView->Clear();
 }
 
-AHexPawn *ADemoGameMode::GetPlayerPawnTyped() const
+AHexPawn* ADemoGameMode::GetPlayerPawnTyped() const
 {
     return Cast<AHexPawn>(UGameplayStatics::GetPlayerPawn(this, 0));
 }
 
-void ADemoGameMode::PreviewPathTo(AHexTile *GoalTile)
+void ADemoGameMode::PreviewPathTo(AHexTile* GoalTile)
 {
-    if (!bPreviewEnabled || !GoalTile)
-        return;
+    if (!bPreviewEnabled || !GoalTile) return;
     PendingGoal = GoalTile;
 
-    // throttle 100 ms
     if (!GetWorldTimerManager().IsTimerActive(PreviewThrottle))
     {
-        GetWorldTimerManager().SetTimer(PreviewThrottle, this, &ADemoGameMode::DoPreviewTick, 0.10f, false);
+        GetWorldTimerManager().SetTimer(PreviewThrottle, this, &ADemoGameMode::DoPreviewTick, kPreviewThrottleSec, false);
     }
 }
 
 void ADemoGameMode::DoPreviewTick()
 {
-    if (!PathView)
-        return;
+    if (!PathView) return;
 
     if (!bPreviewEnabled)
     {
@@ -507,27 +483,23 @@ void ADemoGameMode::DoPreviewTick()
         return;
     }
 
-    UHexGridManager *GM = GetHexGridManager();
-    UHexPathFinder *PF = GetHexPathFinder();
-    if (!GM || !PF)
-        return;
+    UHexGridManager* GM = GetHexGridManager();
+    UHexPathFinder*  PF = GetHexPathFinder();
+    if (!GM || !PF) return;
 
-    AHexPawn *P = GetPlayerPawnTyped();
-    if (!P)
-        return;
+    AHexPawn* P = GetPlayerPawnTyped();
+    if (!P) return;
 
-    AHexTile *StartTile = P->GetCurrentTile();
-    AHexTile *GoalTile = PendingGoal.IsValid() ? PendingGoal.Get() : nullptr;
-    if (!StartTile || !GoalTile)
-        return;
+    AHexTile* StartTile = P->GetCurrentTile();
+    AHexTile* GoalTile  = PendingGoal.IsValid() ? PendingGoal.Get() : nullptr;
+    if (!StartTile || !GoalTile) return;
 
     const FHexAxialCoordinates Start = StartTile->GetAxialCoordinates();
-    const FHexAxialCoordinates Goal = GoalTile->GetAxialCoordinates();
+    const FHexAxialCoordinates Goal  = GoalTile->GetAxialCoordinates();
 
-    if (Start == LastStart && Goal == LastGoal)
-        return;
+    if (Start == LastStart && Goal == LastGoal) return;
     LastStart = Start;
-    LastGoal = Goal;
+    LastGoal  = Goal;
 
     TArray<FHexAxialCoordinates> AxialPath = PF->FindPath(Start, Goal);
     if (AxialPath.Num() < 2)
@@ -538,8 +510,8 @@ void ADemoGameMode::DoPreviewTick()
 
     TArray<FVector> Points;
     Points.Reserve(AxialPath.Num());
-    for (const auto &C : AxialPath)
-        if (AHexTile *T = GM->GetHexTileAt(C))
+    for (const auto& C : AxialPath)
+        if (AHexTile* T = GM->GetHexTileAt(C))
             Points.Add(T->GetActorLocation());
 
     PathView->Show(Points);
@@ -548,29 +520,25 @@ void ADemoGameMode::DoPreviewTick()
 void ADemoGameMode::ClearPreview()
 {
     LastStart = {INT32_MAX, INT32_MAX};
-    LastGoal = {INT32_MAX, INT32_MAX};
-    if (PathView)
-        PathView->Clear();
+    LastGoal  = {INT32_MAX, INT32_MAX};
+    if (PathView) PathView->Clear();
 }
 
 void ADemoGameMode::SetPreviewEnabled(bool bEnabled)
 {
     bPreviewEnabled = bEnabled;
-    if (!bPreviewEnabled)
-        ClearPreview();
+    if (!bPreviewEnabled) ClearPreview();
 }
 
 void ADemoGameMode::TogglePreview()
 {
     bPreviewEnabled = !bPreviewEnabled;
-    if (!bPreviewEnabled)
-        ClearPreview();
+    if (!bPreviewEnabled) ClearPreview();
 }
 
-void ADemoGameMode::OpenShopAt(AHexTile *ShopTile)
+void ADemoGameMode::OpenShopAt(AHexTile* ShopTile)
 {
-    if (!ShopTile)
-        return;
+    if (!ShopTile) return;
 
     if (!ShopWidgetClass)
     {
@@ -578,40 +546,38 @@ void ADemoGameMode::OpenShopAt(AHexTile *ShopTile)
         return;
     }
 
-    if (UUserWidget *W = CreateWidget<UUserWidget>(GetWorld(), ShopWidgetClass))
+    if (UUserWidget* W = CreateWidget<UUserWidget>(GetWorld(), ShopWidgetClass))
     {
         W->AddToViewport();
-        // Optionnel: pause input jeu, montrer curseur, etc.
-        if (APlayerController *PC = UGameplayStatics::GetPlayerController(this, 0))
+        if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
         {
             PC->bShowMouseCursor = true;
             FInputModeGameAndUI Mode;
             Mode.SetHideCursorDuringCapture(false);
             PC->SetInputMode(Mode);
         }
+        ShopWidget = W;
     }
 }
 
-void ADemoGameMode::EndPlay(const EEndPlayReason::Type Reason)
+void ADemoGameMode::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
     GetWorldTimerManager().ClearTimer(SnapRetryHandle);
     GetWorldTimerManager().ClearTimer(PreviewThrottle);
 
-    // Détruire PathView proprement
     if (IsValid(PathView) && !PathView->IsActorBeingDestroyed())
     {
         PathView->Destroy();
         PathView = nullptr;
     }
 
-    // Retirer le widget shop
     if (ShopWidget.IsValid())
     {
         ShopWidget->RemoveFromParent();
         ShopWidget.Reset();
     }
 
-    Super::EndPlay(Reason);
+    Super::EndPlay(EndPlayReason);
 }
 
 void ADemoGameMode::TrySnapPawnOnce()
@@ -627,13 +593,12 @@ void ADemoGameMode::TrySnapPawnOnce()
     AHexTile* T = GridManager->GetHexTileAt(StartCoords);
     if (!T) return;
 
-    // Snap + caméra
+    // Snap pawn and camera
     P->SetCurrentTile(T);
     P->SetActorLocation(T->GetActorLocation());
     PC->bAutoManageActiveCameraTarget = false;
     PC->SetViewTarget(P);
 
-    // Stop le retry
     GetWorldTimerManager().ClearTimer(SnapRetryHandle);
     UE_LOG(LogTemp, Warning, TEXT("Snap OK sur (%d,%d)"), StartCoords.Q, StartCoords.R);
 }

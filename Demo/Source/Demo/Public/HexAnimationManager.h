@@ -13,37 +13,37 @@ UCLASS()
 class DEMO_API AHexAnimationManager : public AActor
 {
     GENERATED_BODY()
-    
+
 public:
     AHexAnimationManager();
-    
+
     // Player registry
-    void RegisterPlayer(AHexPawn* Pawn);
-    void UnregisterPlayer(AHexPawn* Pawn);
-    
+    void RegisterPlayer(AHexPawn *Pawn);
+    void UnregisterPlayer(AHexPawn *Pawn);
+
     // Batch updates for performance
-    UFUNCTION(BlueprintCallable, Category="Animation")
+    UFUNCTION(BlueprintCallable, Category = "Animation")
     void BatchUpdateAnimations();
-    
+
     // Animation pooling for multiple players
-    UPROPERTY(EditAnywhere, Category="Animation")
-    TMap<FString, class UPaperFlipbook*> SharedAnimationPool;
-    
+    UPROPERTY(EditAnywhere, Category = "Animation")
+    TMap<FString, class UPaperFlipbook *> SharedAnimationPool;
+
 protected:
     // Separate lists for optimization
     UPROPERTY()
     TArray<TWeakObjectPtr<AHexPawn>> LocalPlayers;
-    
+
     UPROPERTY()
     TArray<TWeakObjectPtr<AHexPawn>> RemotePlayers;
-    
+
     // Update frequencies
-    UPROPERTY(EditAnywhere, Category="Performance")
-    float LocalPlayerUpdateRate = 0.016f;  // 60 FPS
-    
-    UPROPERTY(EditAnywhere, Category="Performance")
+    UPROPERTY(EditAnywhere, Category = "Performance")
+    float LocalPlayerUpdateRate = 0.016f; // 60 FPS
+
+    UPROPERTY(EditAnywhere, Category = "Performance")
     float RemotePlayerUpdateRate = 0.033f; // 30 FPS
-    
+
 private:
     float LocalUpdateAccumulator = 0.0f;
     float RemoteUpdateAccumulator = 0.0f;
