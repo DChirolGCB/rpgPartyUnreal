@@ -10,21 +10,18 @@ AHexTile::AHexTile()
     SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
     RootComponent = SceneRoot;
 
-    SetActorTickEnabled(false);
-}
-
-void AHexTile::PostInitializeComponents()
-{
-    Super::PostInitializeComponents();
-
-    OnClicked.AddDynamic(this, &AHexTile::HandleOnClicked);
-    OnBeginCursorOver.AddDynamic(this, &AHexTile::HandleOnBeginCursorOver);
-    OnEndCursorOver.AddDynamic(this, &AHexTile::HandleOnEndCursorOver);
+    PrimaryActorTick.bCanEverTick = true; // ← indispensable
+    SetActorTickEnabled(false);           // on ticke seulement pendant l’anim
 }
 
 void AHexTile::BeginPlay()
 {
     Super::BeginPlay();
+
+    // Init élévation AVANT tout early-return
+    BaseZ   = GetActorLocation().Z;
+    TargetZ = BaseZ;
+    bElevInterpActive = false;
 
     if (!GetVisualMesh())
     {
@@ -34,6 +31,10 @@ void AHexTile::BeginPlay()
 
     if (UStaticMeshComponent* Mesh = GetVisualMesh())
     {
+        // S’assure qu’on peut bouger visuellement la tuile
+        if (Mesh->Mobility != EComponentMobility::Movable)
+            Mesh->SetMobility(EComponentMobility::Movable);
+
         if (!DynamicMaterial)
             DynamicMaterial = Mesh->CreateAndSetMaterialInstanceDynamic(0);
 
@@ -51,6 +52,38 @@ void AHexTile::BeginPlay()
         DynamicMaterial->SetVectorParameterValue(TEXT("EmissiveColor"), TypeTint_Shop);
         DynamicMaterial->SetScalarParameterValue(TEXT("EmissiveStrength"), 0.5f);
     }
+}
+
+void AHexTile::Tick(float DeltaSeconds)
+{
+    Super::Tick(DeltaSeconds);
+
+    if (!bElevInterpActive)
+        return;
+
+    FVector Loc = GetActorLocation();
+    const float NewZ = FMath::FInterpTo(Loc.Z, TargetZ, DeltaSeconds, HighlightLerpSpeed);
+    Loc.Z = NewZ;
+    SetActorLocation(Loc);
+
+    if (FMath::IsNearlyEqual(NewZ, TargetZ, 0.5f))
+    {
+        Loc.Z = TargetZ;
+        SetActorLocation(Loc);
+        bElevInterpActive = false;
+        SetActorTickEnabled(false);
+    }
+}
+
+
+
+void AHexTile::PostInitializeComponents()
+{
+    Super::PostInitializeComponents();
+
+    OnClicked.AddDynamic(this, &AHexTile::HandleOnClicked);
+    OnBeginCursorOver.AddDynamic(this, &AHexTile::HandleOnBeginCursorOver);
+    OnEndCursorOver.AddDynamic(this, &AHexTile::HandleOnEndCursorOver);
 }
 
 UStaticMeshComponent* AHexTile::GetVisualMesh()
@@ -125,6 +158,9 @@ void AHexTile::HandleOnEndCursorOver(AActor* /*TouchedActor*/)
 
 void AHexTile::SetHighlighted(bool bHighlight)
 {
+    if (bIsHighlighted == bHighlight)
+        return;
+
     bIsHighlighted = bHighlight;
 
     if (UStaticMeshComponent* Mesh = GetVisualMesh())
@@ -140,11 +176,15 @@ void AHexTile::SetHighlighted(bool bHighlight)
             UpdateMaterialColor();
         }
 
-        // Le surlignage contour passe par le CustomDepth du MESH
         Mesh->SetRenderCustomDepth(bIsHighlighted);
         Mesh->SetCustomDepthStencilValue(1);
     }
+
+    TargetZ = bIsHighlighted ? (BaseZ + HighlightLiftZ) : BaseZ;
+    bElevInterpActive = true;
+    SetActorTickEnabled(true);
 }
+
 
 void AHexTile::UpdateMaterialColor()
 {

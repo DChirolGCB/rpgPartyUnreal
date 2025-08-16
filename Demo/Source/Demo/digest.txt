@@ -5,17 +5,22 @@ Directory structure:
     ├── Demo.h
     ├── Private/
     │   ├── DemoGameMode.cpp
+    │   ├── HexAnimationManager.cpp
     │   ├── HexGridManager.cpp
     │   ├── HexPathFinder.cpp
     │   ├── HexPawn.cpp
+    │   ├── HexSpriteComponent.cpp
     │   ├── HexTile.cpp
     │   └── PathView.cpp
     └── Public/
         ├── DemoGameMode.h
+        ├── HexAnimationManager.h
+        ├── HexAnimationTypes.h
         ├── HexCoordinates.h
         ├── HexGridManager.h
         ├── HexPathFinder.h
         ├── HexPawn.h
+        ├── HexSpriteComponent.h
         ├── HexTile.h
         └── PathView.h
 
@@ -34,7 +39,7 @@ public class Demo : ModuleRules
 
         // Modules publics essentiels pour ActorComponents
         PublicDependencyModuleNames.AddRange(new string[] {
-    "Core", "CoreUObject", "Engine", "InputCore", "UMG", "Slate", "SlateCore"
+    "Core", "CoreUObject", "Engine", "InputCore", "UMG", "Slate", "SlateCore", "Paper2D"
 });
 
         // Modules privÃ©s pour fonctionnalitÃ©s avancÃ©es
@@ -88,6 +93,7 @@ FILE: Private/DemoGameMode.cpp
 #include "HexPawn.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
+#include "HexAnimationManager.h"
 #include "UObject/ConstructorHelpers.h"
 
 namespace HexBridge
@@ -265,6 +271,29 @@ namespace Hex
     }
 }
 
+void ADemoGameMode::PostLogin(APlayerController* NewPlayer)
+{
+    Super::PostLogin(NewPlayer);
+
+    // Lance un retry toutes 0.05s jusquâ€™Ã  snap rÃ©ussi
+    GetWorldTimerManager().SetTimer(
+        SnapRetryHandle, this, &ADemoGameMode::TrySnapPawnOnce,
+        0.05f, /*bLoop=*/true, /*FirstDelay=*/0.0f);
+}
+
+void ADemoGameMode::Logout(AController* Exiting)
+{
+    if (AHexPawn* Pawn = Cast<AHexPawn>(Exiting->GetPawn()))
+    {
+        if (AnimationManager)
+        {
+            AnimationManager->UnregisterPlayer(Pawn);
+        }
+    }
+    
+    Super::Logout(Exiting);
+}
+
 ADemoGameMode::ADemoGameMode()
 {
     DefaultPawnClass = AHexPawn::StaticClass();
@@ -285,11 +314,13 @@ void ADemoGameMode::BeginPlay()
     if (!GridManager || !GridManager->IsRegistered())
     {
         GridManager = NewObject<UHexGridManager>(this, TEXT("HexGridManager_RT"));
+        AddInstanceComponent(GridManager);
         GridManager->RegisterComponent();
     }
     if (!PathFinder || !PathFinder->IsRegistered())
     {
         PathFinder = NewObject<UHexPathFinder>(this, TEXT("HexPathFinder_RT"));
+        AddInstanceComponent(PathFinder);
         PathFinder->RegisterComponent();
     }
 
@@ -312,9 +343,13 @@ void ADemoGameMode::BeginPlay()
     }
 
     // Optionnel : forcer le PC depuis un SoftClass si diffÃ©rent
-    if (PCClassSoft.IsValid())
+    // Optionnel : forcer le PC depuis un SoftClass si dÃ©fini dans le BP de GameMode
+    if (!PCClassSoft.IsNull())
     {
-        PlayerControllerClass = PCClassSoft.Get();
+        if (UClass *PCCls = PCClassSoft.LoadSynchronous())
+        {
+            PlayerControllerClass = PCCls;
+        }
     }
 
     if (APlayerController *PC0 = GetWorld()->GetFirstPlayerController())
@@ -346,6 +381,7 @@ void ADemoGameMode::BeginPlay()
 
         if (NewPC)
         {
+            RestartPlayer(NewPC);
             if (Pawn)
             {
                 OldPC->UnPossess();
@@ -399,6 +435,12 @@ void ADemoGameMode::BeginPlay()
     {
         PathView = GetWorld()->SpawnActor<APathView>();
     }
+
+    UE_LOG(LogTemp, Warning, TEXT("PC=%s  Pawn=%s  ViewTarget=%s"),
+    *GetNameSafe(GetWorld()->GetFirstPlayerController()),
+    *GetNameSafe(GetWorld()->GetFirstPlayerController() ? GetWorld()->GetFirstPlayerController()->GetPawn() : nullptr),
+    *GetNameSafe(GetWorld()->GetFirstPlayerController() ? GetWorld()->GetFirstPlayerController()->GetViewTarget() : nullptr));
+
 }
 
 void ADemoGameMode::HandleTileClicked(AHexTile *ClickedTile)
@@ -455,7 +497,7 @@ void ADemoGameMode::HandleTileClicked(AHexTile *ClickedTile)
     HexP->StartPathFollowing(Path, GridManager);
 }
 
-void ADemoGameMode::InitializePawnStartTile(const FHexAxialCoordinates &StartCoords)
+void ADemoGameMode::InitializePawnStartTile(const FHexAxialCoordinates &InStartCoords)
 {
     if (!GridManager)
     {
@@ -463,11 +505,11 @@ void ADemoGameMode::InitializePawnStartTile(const FHexAxialCoordinates &StartCoo
         return;
     }
 
-    AHexTile *Tile = GridManager->GetHexTileAt(StartCoords);
+    AHexTile *Tile = GridManager->GetHexTileAt(InStartCoords);
     if (!Tile)
     {
         UE_LOG(LogTemp, Error, TEXT("InitializePawnStartTile : pas de tuile Ã  (%d,%d)"),
-               StartCoords.Q, StartCoords.R);
+               InStartCoords.Q, InStartCoords.R);
         return;
     }
 
@@ -475,7 +517,7 @@ void ADemoGameMode::InitializePawnStartTile(const FHexAxialCoordinates &StartCoo
     {
         HexP->SetCurrentTile(Tile);
         UE_LOG(LogTemp, Warning, TEXT("Pawn dÃ©marrÃ© sur (%d,%d)"),
-               StartCoords.Q, StartCoords.R);
+               InStartCoords.Q, InStartCoords.R);
     }
     else
     {
@@ -637,6 +679,7 @@ void ADemoGameMode::OpenShopAt(AHexTile *ShopTile)
 
 void ADemoGameMode::EndPlay(const EEndPlayReason::Type Reason)
 {
+    GetWorldTimerManager().ClearTimer(SnapRetryHandle);
     GetWorldTimerManager().ClearTimer(PreviewThrottle);
 
     // DÃ©truire PathView proprement
@@ -656,6 +699,58 @@ void ADemoGameMode::EndPlay(const EEndPlayReason::Type Reason)
     Super::EndPlay(Reason);
 }
 
+void ADemoGameMode::TrySnapPawnOnce()
+{
+    if (!GridManager) return;
+
+    APlayerController* PC = GetWorld()->GetFirstPlayerController();
+    if (!PC) return;
+
+    AHexPawn* P = Cast<AHexPawn>(PC->GetPawn());
+    if (!P) return;
+
+    AHexTile* T = GridManager->GetHexTileAt(StartCoords);
+    if (!T) return;
+
+    // Snap + camÃ©ra
+    P->SetCurrentTile(T);
+    P->SetActorLocation(T->GetActorLocation());
+    PC->bAutoManageActiveCameraTarget = false;
+    PC->SetViewTarget(P);
+
+    // Stop le retry
+    GetWorldTimerManager().ClearTimer(SnapRetryHandle);
+    UE_LOG(LogTemp, Warning, TEXT("Snap OK sur (%d,%d)"), StartCoords.Q, StartCoords.R);
+}
+
+
+
+================================================
+FILE: Private/HexAnimationManager.cpp
+================================================
+// HexAnimationManager.cpp
+#include "HexAnimationManager.h"
+#include "HexPawn.h"  // Add this include
+
+AHexAnimationManager::AHexAnimationManager()
+{
+    PrimaryActorTick.bCanEverTick = true;
+}
+
+void AHexAnimationManager::RegisterPlayer(AHexPawn* Pawn)
+{
+    // Implementation
+}
+
+void AHexAnimationManager::UnregisterPlayer(AHexPawn* Pawn)
+{
+    // Implementation
+}
+
+void AHexAnimationManager::BatchUpdateAnimations()
+{
+    // Implementation
+}
 
 
 ================================================
@@ -1189,7 +1284,11 @@ FILE: Private/HexPawn.cpp
 #include "HexGridManager.h"
 #include "HexTile.h"
 #include "DemoGameMode.h"
+#include "HexAnimationTypes.h"
 #include "Kismet/GameplayStatics.h"
+#include "HexSpriteComponent.h"
+#include "Net/UnrealNetwork.h"
+#include "GameFramework/PlayerController.h"
 #include "Engine/World.h"
 
 // Includes rÃ©els des components ICI (pas dans le .h)
@@ -1218,16 +1317,23 @@ AHexPawn::AHexPawn()
 	TopDownCamera->bUsePawnControlRotation = false;
 	TopDownCamera->SetProjectionMode(ECameraProjectionMode::Perspective);
 	TopDownCamera->SetFieldOfView(60.f);
+
+	SpriteComp = CreateDefaultSubobject<UHexSpriteComponent>(TEXT("SpriteComp"));
+	SpriteComp->SetupAttachment(RootComponent);
 }
 
 void AHexPawn::BeginPlay()
 {
 	Super::BeginPlay();
-
+    if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
+    {
+        PC->bAutoManageActiveCameraTarget = false;
+        PC->SetViewTarget(this);            // immÃ©diat
+    }
 	if (CameraBoom)
 	{
 		CameraBoom->TargetArmLength = CameraHeight;
-		CameraBoom->SetRelativeRotation(FRotator(-50.f, 0.f, 0.f));
+		CameraBoom->SetRelativeRotation(FRotator(-45.f, 0.f, 0.f));
 	}
 	if (TopDownCamera)
 	{
@@ -1271,9 +1377,11 @@ void AHexPawn::StartPathFollowing(const TArray<FHexAxialCoordinates> &InPath, UH
 void AHexPawn::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+	if (SpriteComp)
+		SpriteComp->SetAnimationState(bIsMoving ? EHexAnimState::Walking : EHexAnimState::Idle);
 	if (!bIsMoving)
 		return;
-
+	
 	StepElapsed += DeltaTime;
 	float Alpha = (StepDuration > SMALL_NUMBER) ? FMath::Clamp(StepElapsed / StepDuration, 0.f, 1.f) : 1.f;
 	if (bEaseInOut)
@@ -1387,6 +1495,100 @@ void AHexPawn::InitializePawnStartTile(const FHexAxialCoordinates &StartCoords)
 	CurrentTile = Tile;
 	SetActorLocation(Tile->GetActorLocation());
 	UE_LOG(LogTemp, Warning, TEXT("Pawn initialized on tile (%d, %d)"), StartCoords.Q, StartCoords.R);
+}
+
+void AHexPawn::GetLifetimeReplicatedProps(TArray<FLifetimeProperty> &OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(AHexPawn, ReplicatedPath);
+}
+
+void AHexPawn::OnRep_CurrentPath()
+{
+	// Quand le path rÃ©pliquÃ© arrive sur client â†’ lancer dÃ©placement
+	if (GridRef && ReplicatedPath.Num() > 0)
+	{
+		StartPathFollowing(ReplicatedPath, GridRef);
+	}
+}
+
+void AHexPawn::ServerRequestMove_Implementation(const TArray<FHexAxialCoordinates> &NewPath)
+{
+	ReplicatedPath = NewPath;
+	StartPathFollowing(NewPath, GridRef);
+}
+
+void AHexPawn::PossessedBy(AController* NewController)
+{
+    Super::PossessedBy(NewController);
+    if (APlayerController* PC = Cast<APlayerController>(NewController))
+    {
+        PC->bAutoManageActiveCameraTarget = false;
+        PC->SetViewTarget(this);            // serveur
+    }
+}
+
+void AHexPawn::OnRep_Controller()
+{
+    Super::OnRep_Controller();
+    if (APlayerController* PC = Cast<APlayerController>(GetController()))
+    {
+        PC->bAutoManageActiveCameraTarget = false;
+        PC->ClientSetViewTarget(this);      // client
+    }
+}
+
+
+
+================================================
+FILE: Private/HexSpriteComponent.cpp
+================================================
+#include "HexSpriteComponent.h"
+#include "Net/UnrealNetwork.h"
+
+UHexSpriteComponent::UHexSpriteComponent()
+{
+    SetIsReplicatedByDefault(true);
+    SetLooping(true);
+}
+
+void UHexSpriteComponent::SetAnimationState(EHexAnimState NewState)
+{
+    if (CurrentAnimState == NewState) return;
+    CurrentAnimState = NewState;
+    ApplyAnim();
+}
+
+void UHexSpriteComponent::OnRep_AnimState()
+{
+    ApplyAnim();
+}
+
+void UHexSpriteComponent::ApplyAnim()
+{
+    UPaperFlipbook* Wanted = nullptr;
+    switch (CurrentAnimState)
+    {
+        case EHexAnimState::Walking: Wanted = WalkAnim; break;
+        default:                     Wanted = IdleAnim; break;
+    }
+
+    if (Wanted && GetFlipbook() != Wanted)
+    {
+        SetFlipbook(Wanted);
+        PlayFromStart();
+    }
+    else if (Wanted && !IsPlaying())
+    {
+        Play();
+    }
+}
+
+void UHexSpriteComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+    Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+    DOREPLIFETIME(UHexSpriteComponent, CurrentAnimState);
 }
 
 
@@ -1631,7 +1833,173 @@ void APathView::Show(const TArray<FVector>& Points)
 ================================================
 FILE: Public/DemoGameMode.h
 ================================================
-Error reading file with 'cp1252': 'charmap' codec can't decode byte 0x90 in position 1821: character maps to <undefined>
+Error reading file with 'cp1252': 'charmap' codec can't decode byte 0x90 in position 2008: character maps to <undefined>
+
+
+================================================
+FILE: Public/HexAnimationManager.h
+================================================
+// HexAnimationManager.h - Add at the top after includes
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "HexAnimationManager.generated.h"
+
+// Forward declaration
+class AHexPawn;
+
+// HexAnimationManager.h - Manages all player animations efficiently
+UCLASS()
+class DEMO_API AHexAnimationManager : public AActor
+{
+    GENERATED_BODY()
+    
+public:
+    AHexAnimationManager();
+    
+    // Player registry
+    void RegisterPlayer(AHexPawn* Pawn);
+    void UnregisterPlayer(AHexPawn* Pawn);
+    
+    // Batch updates for performance
+    UFUNCTION(BlueprintCallable, Category="Animation")
+    void BatchUpdateAnimations();
+    
+    // Animation pooling for multiple players
+    UPROPERTY(EditAnywhere, Category="Animation")
+    TMap<FString, class UPaperFlipbook*> SharedAnimationPool;
+    
+protected:
+    // Separate lists for optimization
+    UPROPERTY()
+    TArray<TWeakObjectPtr<AHexPawn>> LocalPlayers;
+    
+    UPROPERTY()
+    TArray<TWeakObjectPtr<AHexPawn>> RemotePlayers;
+    
+    // Update frequencies
+    UPROPERTY(EditAnywhere, Category="Performance")
+    float LocalPlayerUpdateRate = 0.016f;  // 60 FPS
+    
+    UPROPERTY(EditAnywhere, Category="Performance")
+    float RemotePlayerUpdateRate = 0.033f; // 30 FPS
+    
+private:
+    float LocalUpdateAccumulator = 0.0f;
+    float RemoteUpdateAccumulator = 0.0f;
+};
+
+
+================================================
+FILE: Public/HexAnimationTypes.h
+================================================
+// Public/HexAnimationTypes.h
+#pragma once
+
+#include "CoreMinimal.h"
+#include "HexAnimationTypes.generated.h"
+
+// Animation states enum (shared across the project)
+UENUM(BlueprintType)
+enum class EHexAnimState : uint8
+{
+    Idle        = 0 UMETA(DisplayName="Idle"),
+    Walking     = 1 UMETA(DisplayName="Walking"),
+    Attacking   = 2 UMETA(DisplayName="Attacking"),
+    Damaged     = 3 UMETA(DisplayName="Damaged"),
+    Dead        = 4 UMETA(DisplayName="Dead"),
+    Interacting = 5 UMETA(DisplayName="Interacting"),
+    Casting     = 6 UMETA(DisplayName="Casting"),
+    MAX         = 7 UMETA(Hidden)
+};
+
+// Compressed state for network replication
+USTRUCT(BlueprintType)
+struct DEMO_API FCompressedAnimState
+{
+    GENERATED_BODY()
+
+    uint8 AnimState : 3;      // 0-7 states
+    uint8 FacingDir : 3;      // 0-7 directions  
+    uint8 IsMoving : 1;       // Moving flag
+    uint8 IsCombat : 1;       // Combat flag
+
+    FCompressedAnimState()
+    {
+        AnimState = 0;
+        FacingDir = 0;
+        IsMoving = 0;
+        IsCombat = 0;
+    }
+
+    // Helper functions
+    void SetAnimState(EHexAnimState State) 
+    { 
+        AnimState = (uint8)State; 
+    }
+    
+    EHexAnimState GetAnimState() const 
+    { 
+        return (EHexAnimState)AnimState; 
+    }
+
+    // Network serialization
+    bool NetSerialize(FArchive& Ar, class UPackageMap* Map, bool& bOutSuccess)
+    {
+        uint8 Packed = (AnimState << 5) | (FacingDir << 2) | (IsMoving << 1) | IsCombat;
+        Ar.SerializeBits(&Packed, 8);
+        if (Ar.IsLoading())
+        {
+            AnimState = (Packed >> 5) & 0x07;
+            FacingDir = (Packed >> 2) & 0x07;
+            IsMoving = (Packed >> 1) & 0x01;
+            IsCombat = Packed & 0x01;
+        }
+        bOutSuccess = true;
+        return true;
+    }
+};
+
+// Must tell Unreal this struct can be serialized
+template<>
+struct TStructOpsTypeTraits<FCompressedAnimState> : public TStructOpsTypeTraitsBase2<FCompressedAnimState>
+{
+    enum
+    {
+        WithNetSerializer = true,
+    };
+};
+
+// Full animation state (for local use, not compressed)
+USTRUCT(BlueprintType)
+struct DEMO_API FHexAnimationState
+{
+    GENERATED_BODY()
+
+    UPROPERTY(BlueprintReadWrite, Category="Animation")
+    EHexAnimState CurrentState = EHexAnimState::Idle;
+
+    UPROPERTY(BlueprintReadWrite, Category="Animation")
+    float StateStartTime = 0.0f;
+
+    UPROPERTY(BlueprintReadWrite, Category="Animation")
+    int32 FacingDirection = 0;
+
+    UPROPERTY(BlueprintReadWrite, Category="Animation")
+    bool bIsMoving = false;
+
+    // Convert to compressed for network
+    FCompressedAnimState Compress() const
+    {
+        FCompressedAnimState Compressed;
+        Compressed.SetAnimState(CurrentState);
+        Compressed.FacingDir = FMath::Clamp(FacingDirection, 0, 7);
+        Compressed.IsMoving = bIsMoving ? 1 : 0;
+        Compressed.IsCombat = (CurrentState == EHexAnimState::Attacking) ? 1 : 0;
+        return Compressed;
+    }
+};
 
 
 ================================================
@@ -1740,6 +2108,7 @@ FILE: Public/HexPawn.h
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
 #include "HexCoordinates.h"
+#include "HexAnimationTypes.h"
 #include "HexPawn.generated.h"
 
 // Forward declarations UNIQUEMENT ici (UHT-friendly)
@@ -1760,61 +2129,136 @@ public:
     virtual void Tick(float DeltaTime) override;
 
     // --- API move ---
-    UFUNCTION(BlueprintCallable, Category="Hex|Move")
-    void StartPathFollowing(const TArray<FHexAxialCoordinates>& InPath, class UHexGridManager* InGridManager);
+    UFUNCTION(BlueprintCallable, Category = "Hex|Move")
+    void StartPathFollowing(const TArray<FHexAxialCoordinates> &InPath, class UHexGridManager *InGridManager);
 
-    UFUNCTION(BlueprintCallable, Category="Hex|Move")
-    void SetCurrentTile(AHexTile* NewTile);
+    UFUNCTION(BlueprintCallable, Category = "Hex|Move")
+    void SetCurrentTile(AHexTile *NewTile);
 
-    UFUNCTION(BlueprintPure, Category="Hex|Move")
-    AHexTile* GetCurrentTile() const { return CurrentTile; }
+    UFUNCTION(BlueprintPure, Category = "Hex|Move")
+    AHexTile *GetCurrentTile() const { return CurrentTile; }
 
-    UFUNCTION(BlueprintCallable, Category="Hex|Move")
-    void InitializePawnStartTile(const FHexAxialCoordinates& StartCoords);
+    UFUNCTION(BlueprintCallable, Category = "Hex|Move")
+    void InitializePawnStartTile(const FHexAxialCoordinates &StartCoords);
 
-public:
     // --- Camera tuning ---
-    UPROPERTY(EditAnywhere, Category="Camera", meta=(ClampMin="100.0"))
-    float CameraHeight = 1500.f;                // longueur du boom
+    UPROPERTY(EditAnywhere, Category = "Camera", meta = (ClampMin = "100.0"))
+    float CameraHeight = 1500.f; // longueur du boom
 
     // Pas de rotation pendant le dÃ©placement
-    UPROPERTY(EditAnywhere, Category="Hex|Move")
+    UPROPERTY(EditAnywhere, Category = "Hex|Move")
     bool bFaceDirection = false;
 
     // Tuning dÃ©placement
-    UPROPERTY(EditAnywhere, Category="Hex|Move", meta=(ClampMin="0.05"))
+    UPROPERTY(EditAnywhere, Category = "Hex|Move", meta = (ClampMin = "0.05"))
     float StepDuration = 0.2f;
 
-    UPROPERTY(EditAnywhere, Category="Hex|Move")
+    UPROPERTY(EditAnywhere, Category = "Hex|Move")
     bool bEaseInOut = true;
 
-    UPROPERTY(EditAnywhere, Category="Hex|Move", meta=(ClampMin="0.0"))
+    UPROPERTY(EditAnywhere, Category = "Hex|Move", meta = (ClampMin = "0.0"))
     float TurnRateDegPerSec = 720.f; // ignorÃ© si bFaceDirection=false
+
+    // Network setup
+    virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty> &OutLifetimeProps) const override;
+
+    // Movement replication
+    UPROPERTY(ReplicatedUsing = OnRep_CurrentPath)
+    TArray<FHexAxialCoordinates> ReplicatedPath;
+
+    UFUNCTION()
+    void OnRep_CurrentPath();
+
+    // Server-authoritative movement
+    UFUNCTION(Server, Reliable)
+    void ServerRequestMove(const TArray<FHexAxialCoordinates> &NewPath);
+
+    // Smooth interpolation for remote players
+    UPROPERTY(EditAnywhere, Category = "Network")
+    bool bUseSmoothingForRemotePlayers = true;
+
+    UPROPERTY(EditAnywhere, Category = "Network", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+    float NetworkSmoothingRate = 0.1f;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Hex|Visual")
+    class UHexSpriteComponent* SpriteComp;
+
+protected:
+    void TickLocalPlayer(float DeltaTime);
+    void TickRemotePlayer(float DeltaTime);
+    virtual void PossessedBy(AController* NewController) override;
+    virtual void OnRep_Controller() override;
 
 private:
     // Components (fwd-decl + UPROPERTY propre)
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Camera", meta=(AllowPrivateAccess="true"))
-    USpringArmComponent* CameraBoom = nullptr;
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera", meta = (AllowPrivateAccess = "true"))
+    USpringArmComponent *CameraBoom = nullptr;
 
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Camera", meta=(AllowPrivateAccess="true"))
-    UCameraComponent*    TopDownCamera = nullptr;
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera", meta = (AllowPrivateAccess = "true"))
+    UCameraComponent *TopDownCamera = nullptr;
 
     // RÃ©fs/Ã©tat
     UPROPERTY()
-    UHexGridManager* GridRef = nullptr;
+    UHexGridManager *GridRef = nullptr;
 
     UPROPERTY()
     TArray<FHexAxialCoordinates> CurrentPath;
 
     int32 CurrentStepIndex = 0;
-    bool  bIsMoving = false;
-    float StepElapsed  = 0.f;
+    bool bIsMoving = false;
+    float StepElapsed = 0.f;
 
     FVector StartLocation;
     FVector TargetLocation;
 
     UPROPERTY()
-    AHexTile* CurrentTile = nullptr;
+    AHexTile *CurrentTile = nullptr;
+
+    FVector LastReplicatedLocation;
+    FVector SmoothLocation;
+};
+
+
+
+================================================
+FILE: Public/HexSpriteComponent.h
+================================================
+#pragma once
+
+#include "CoreMinimal.h"
+#include "PaperFlipbookComponent.h"
+#include "HexAnimationTypes.h"
+#include "PaperFlipbook.h" // en haut
+#include "HexSpriteComponent.generated.h"
+
+
+UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
+class DEMO_API UHexSpriteComponent : public UPaperFlipbookComponent
+{
+    GENERATED_BODY()
+public:
+    UHexSpriteComponent();
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Hex|Anim")
+    UPaperFlipbook* IdleAnim = nullptr;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Hex|Anim")
+    UPaperFlipbook* WalkAnim = nullptr;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, ReplicatedUsing=OnRep_AnimState, Category="Hex|Anim")
+    EHexAnimState CurrentAnimState = EHexAnimState::Idle;
+
+    UFUNCTION(BlueprintCallable, Category="Hex|Anim")
+    void SetAnimationState(EHexAnimState NewState);
+
+protected:
+    UFUNCTION()
+    void OnRep_AnimState();
+
+    virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+private:
+    void ApplyAnim(); // choisit le bon flipbook selon CurrentAnimState
 };
 
 

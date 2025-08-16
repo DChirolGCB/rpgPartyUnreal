@@ -8,308 +8,286 @@
 #include "Net/UnrealNetwork.h"
 #include "GameFramework/PlayerController.h"
 #include "Engine/World.h"
-
-// Includes réels des components ICI (pas dans le .h)
 #include "Components/SceneComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Camera/CameraComponent.h"
 
 AHexPawn::AHexPawn()
 {
-	PrimaryActorTick.bCanEverTick = true;
-	bReplicates = true;
-    NetUpdateFrequency = 60.f;
-    MinNetUpdateFrequency = 30.f;
-	if (!RootComponent)
-	{
-		RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
-	}
+    PrimaryActorTick.bCanEverTick = true;
+    bReplicates = true;
+    SetNetUpdateFrequency(60.f);
+    SetMinNetUpdateFrequency(30.f);
 
-	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
-	CameraBoom->SetupAttachment(RootComponent);
-	CameraBoom->bDoCollisionTest = false;
-	CameraBoom->bUsePawnControlRotation = false;
-	CameraBoom->TargetArmLength = CameraHeight;
-	CameraBoom->SetRelativeRotation(FRotator(-50.f, 0.f, 0.f)); // pitch -50°
+    if (!RootComponent)
+    {
+        RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
+    }
 
-	TopDownCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("TopDownCamera"));
-	TopDownCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
-	TopDownCamera->bUsePawnControlRotation = false;
-	TopDownCamera->SetProjectionMode(ECameraProjectionMode::Perspective);
-	TopDownCamera->SetFieldOfView(60.f);
+    CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
+    CameraBoom->SetupAttachment(RootComponent);
+    CameraBoom->bDoCollisionTest = false;
+    CameraBoom->bUsePawnControlRotation = false;
+    CameraBoom->TargetArmLength = CameraHeight;
+    CameraBoom->SetRelativeRotation(FRotator(-50.f, 0.f, 0.f));
 
-	SpriteComp = CreateDefaultSubobject<UHexSpriteComponent>(TEXT("SpriteComp"));
-	SpriteComp->SetupAttachment(RootComponent);
+    TopDownCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("TopDownCamera"));
+    TopDownCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
+    TopDownCamera->bUsePawnControlRotation = false;
+    TopDownCamera->SetProjectionMode(ECameraProjectionMode::Perspective);
+    TopDownCamera->SetFieldOfView(60.f);
+
+    SpriteComp = CreateDefaultSubobject<UHexSpriteComponent>(TEXT("SpriteComp"));
+    SpriteComp->SetupAttachment(RootComponent);
 }
 
 void AHexPawn::BeginPlay()
 {
-	Super::BeginPlay();
-	if (APlayerController *PC = UGameplayStatics::GetPlayerController(this, 0))
-	{
-		PC->bAutoManageActiveCameraTarget = false;
-		PC->SetViewTarget(this); // immédiat
-	}
-	if (CameraBoom)
-	{
-		CameraBoom->TargetArmLength = CameraHeight;
-		CameraBoom->SetRelativeRotation(FRotator(-45.f, 0.f, 0.f));
-	}
-	if (TopDownCamera)
-	{
-		TopDownCamera->SetProjectionMode(ECameraProjectionMode::Perspective);
-	}
-	if (!SpriteComp || SpriteComp->HasAnyFlags(RF_ClassDefaultObject) || SpriteComp->GetOwner() != this)
+    Super::BeginPlay();
+
+    if (!SpriteComp || SpriteComp->HasAnyFlags(RF_ClassDefaultObject) || SpriteComp->GetOwner() != this)
     {
         if (UHexSpriteComponent* Found = FindComponentByClass<UHexSpriteComponent>())
         {
             SpriteComp = Found;
-            UE_LOG(LogTemp, Warning, TEXT("[Sprite] Rebound to instance comp: %s (owner=%s)"),
-                   *GetNameSafe(SpriteComp), *GetNameSafe(SpriteComp->GetOwner()));
         }
         else
         {
-            UE_LOG(LogTemp, Error, TEXT("[Sprite] No UHexSpriteComponent found on pawn instance"));
+            UE_LOG(LogTemp, Error, TEXT("[Sprite] Missing UHexSpriteComponent on instance"));
         }
     }
 
     if (SpriteComp)
     {
+        SpriteBaseScale = SpriteComp->GetRelativeScale3D().GetAbs();
         SpriteComp->SetPlayRate(1.f);
         SpriteComp->SetAnimationState(EHexAnimState::Idle);
-        UE_LOG(LogTemp, Warning, TEXT("[Sprite] Idle=%s Walk=%s Flipbook=%s Owner=%s IsCDO=%d"),
-            *GetNameSafe(SpriteComp->IdleAnim),
-            *GetNameSafe(SpriteComp->WalkAnim),
-            *GetNameSafe(SpriteComp->GetFlipbook()),
-            *GetNameSafe(SpriteComp->GetOwner()),
-            SpriteComp->HasAnyFlags(RF_ClassDefaultObject) ? 1 : 0);
+    }
+
+    if (CameraBoom)
+    {
+        CameraBoom->TargetArmLength = CameraHeight;
+        CameraBoom->SetRelativeRotation(FRotator(-45.f, 0.f, 0.f));
     }
 
     if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
-    { PC->bAutoManageActiveCameraTarget = false; PC->SetViewTarget(this); }
+    {
+        PC->bAutoManageActiveCameraTarget = false;
+        PC->SetViewTarget(this);
+    }
 }
 
-void AHexPawn::StartPathFollowing(const TArray<FHexAxialCoordinates> &InPath, UHexGridManager *InGridManager)
+void AHexPawn::UpdateSpriteMirrorToward(const FVector& From, const FVector& To)
 {
-	GridRef = InGridManager;
-	CurrentPath = InPath;
-	bIsMoving = true;
-	if (SpriteComp && HasAuthority())
-	{
-		SpriteComp->SetAnimationState(EHexAnimState::Walking);
-		UE_LOG(LogTemp, Warning, TEXT("[Anim] -> Walking (StartPathFollowing)"));
-	}
-	int32 StartIndex = 0;
-	if (CurrentTile && CurrentPath.Num() > 0)
-	{
-		if (CurrentPath[0] == CurrentTile->GetAxialCoordinates())
-			StartIndex = 1;
-	}
+    if (!SpriteComp) return;
 
-	if (!GridRef || !CurrentPath.IsValidIndex(StartIndex))
-	{
-		bIsMoving = false;
-		if (SpriteComp && HasAuthority())
-		{
-			SpriteComp->SetAnimationState(EHexAnimState::Idle);
-			UE_LOG(LogTemp, Warning, TEXT("[Anim] -> Idle (stop)"));
-		}
-		return;
-	}
+    const FVector2D d = FVector2D(To - From).GetSafeNormal();
+    if (d.IsNearlyZero()) return;
 
-	CurrentStepIndex = StartIndex;
+    const FVector2D camRight = FVector2D(TopDownCamera ? TopDownCamera->GetRightVector() : FVector::RightVector);
+    const bool goingRight = FVector2D::DotProduct(d, camRight) >= 0.f;
 
-	AHexTile *NextTile = GridRef->GetHexTileAt(CurrentPath[CurrentStepIndex]);
-	if (!NextTile)
-	{
-		bIsMoving = false;
-		if (SpriteComp && HasAuthority())
-		{
-			SpriteComp->SetAnimationState(EHexAnimState::Idle);
-			UE_LOG(LogTemp, Warning, TEXT("[Anim] -> Idle (stop)"));
-		}
-		return;
-	}
+    FVector s = SpriteBaseScale;
+    // Sprite vertical: flip horizontal en inversant X
+    s.X = goingRight ?  FMath::Abs(s.X) : -FMath::Abs(s.X);
+    SpriteComp->SetRelativeScale3D(s);
+}
 
-	StartLocation = GetActorLocation();
-	TargetLocation = NextTile->GetActorLocation();
-	StepElapsed = 0.f;
-	bIsMoving = true;
+void AHexPawn::StartPathFollowing(const TArray<FHexAxialCoordinates>& InPath, UHexGridManager* InGridManager)
+{
+    GridRef     = InGridManager;
+    CurrentPath = InPath;
+
+    int32 StartIndex = 0;
+    if (CurrentTile && CurrentPath.Num() > 0 && CurrentPath[0] == CurrentTile->GetAxialCoordinates())
+    {
+        StartIndex = 1;
+    }
+
+    if (!GridRef || !CurrentPath.IsValidIndex(StartIndex))
+    {
+        bIsMoving = false;
+        if (HasAuthority() && SpriteComp) SpriteComp->SetAnimationState(EHexAnimState::Idle);
+        return;
+    }
+
+    CurrentStepIndex = StartIndex;
+
+    AHexTile* NextTile = GridRef->GetHexTileAt(CurrentPath[CurrentStepIndex]);
+    if (!NextTile)
+    {
+        bIsMoving = false;
+        if (HasAuthority() && SpriteComp) SpriteComp->SetAnimationState(EHexAnimState::Idle);
+        return;
+    }
+
+    StartLocation = GetActorLocation();
+    TargetLocation = NextTile->GetActorLocation();
+    StepElapsed = 0.f;
+    bIsMoving = true;
+
+    UpdateSpriteMirrorToward(StartLocation, TargetLocation);
+    if (HasAuthority() && SpriteComp) SpriteComp->SetAnimationState(EHexAnimState::Walking);
 }
 
 void AHexPawn::Tick(float DeltaTime)
 {
-	Super::Tick(DeltaTime);
-	if (!bIsMoving)
-	{
-		if (SpriteComp)
-			SpriteComp->SetAnimationState(EHexAnimState::Idle);
-		return;
-	}
+    Super::Tick(DeltaTime);
 
-	StepElapsed += DeltaTime;
-	float Alpha = (StepDuration > SMALL_NUMBER) ? FMath::Clamp(StepElapsed / StepDuration, 0.f, 1.f) : 1.f;
-	if (bEaseInOut)
-	{
-		Alpha = Alpha * Alpha * (3.f - 2.f * Alpha);
-	} // smoothstep
+    if (!bIsMoving)
+    {
+        if (HasAuthority() && SpriteComp) SpriteComp->SetAnimationState(EHexAnimState::Idle);
+        return;
+    }
 
-	const FVector NewLoc = FMath::Lerp(StartLocation, TargetLocation, Alpha);
-	SetActorLocation(NewLoc);
+    StepElapsed += DeltaTime;
+    float Alpha = (StepDuration > SMALL_NUMBER) ? FMath::Clamp(StepElapsed / StepDuration, 0.f, 1.f) : 1.f;
+    if (bEaseInOut)
+    {
+        Alpha = Alpha * Alpha * (3.f - 2.f * Alpha);
+    }
 
-	// Pas de rotation (bFaceDirection=false par défaut) — on laisse le bloc conditionnel
-	if (bFaceDirection)
-	{
-		const FVector Dir2D(TargetLocation.X - NewLoc.X, TargetLocation.Y - NewLoc.Y, 0.f);
-		if (!Dir2D.IsNearlyZero())
-		{
-			const FRotator Cur = GetActorRotation();
-			const FRotator Want = Dir2D.Rotation();
-			const float DeltaYaw = FMath::FindDeltaAngleDegrees(Cur.Yaw, Want.Yaw);
-			const float MaxStep = TurnRateDegPerSec * DeltaTime;
-			SetActorRotation(FRotator(0.f, Cur.Yaw + FMath::Clamp(DeltaYaw, -MaxStep, MaxStep), 0.f));
-		}
-	}
+    const FVector NewLoc = FMath::Lerp(StartLocation, TargetLocation, Alpha);
+    SetActorLocation(NewLoc);
 
-	if (Alpha >= 1.f - KINDA_SMALL_NUMBER)
-	{
-		SetActorLocation(TargetLocation); // snap
+    if (bFaceDirection)
+    {
+        const FVector Dir2D(TargetLocation.X - NewLoc.X, TargetLocation.Y - NewLoc.Y, 0.f);
+        if (!Dir2D.IsNearlyZero())
+        {
+            const FRotator Cur = GetActorRotation();
+            const FRotator Want = Dir2D.Rotation();
+            const float DeltaYaw = FMath::FindDeltaAngleDegrees(Cur.Yaw, Want.Yaw);
+            const float MaxStep = TurnRateDegPerSec * DeltaTime;
+            SetActorRotation(FRotator(0.f, Cur.Yaw + FMath::Clamp(DeltaYaw, -MaxStep, MaxStep), 0.f));
+        }
+    }
 
-		if (GridRef && CurrentPath.IsValidIndex(CurrentStepIndex))
-		{
-			if (AHexTile *Landed = GridRef->GetHexTileAt(CurrentPath[CurrentStepIndex]))
-				CurrentTile = Landed;
-		}
+    if (Alpha >= 1.f - KINDA_SMALL_NUMBER)
+    {
+        SetActorLocation(TargetLocation);
 
-		++CurrentStepIndex;
+        if (GridRef && CurrentPath.IsValidIndex(CurrentStepIndex))
+        {
+            if (AHexTile* Landed = GridRef->GetHexTileAt(CurrentPath[CurrentStepIndex]))
+            {
+                CurrentTile = Landed;
+            }
+        }
 
-		if (!GridRef || !CurrentPath.IsValidIndex(CurrentStepIndex))
-		{
-			bIsMoving = false;
-			if (SpriteComp && HasAuthority())
-			{
-				SpriteComp->SetAnimationState(EHexAnimState::Idle);
-				UE_LOG(LogTemp, Warning, TEXT("[Anim] -> Idle (stop)"));
-			}
-			return;
-		}
+        ++CurrentStepIndex;
 
-		AHexTile *NextTile = GridRef->GetHexTileAt(CurrentPath[CurrentStepIndex]);
-		if (CurrentTile && GridRef && NextTile)
-		{
-			const FHexAxialCoordinates Cur = CurrentTile->GetAxialCoordinates();
-			const FHexAxialCoordinates Next = CurrentPath[CurrentStepIndex];
+        if (!GridRef || !CurrentPath.IsValidIndex(CurrentStepIndex))
+        {
+            bIsMoving = false;
+            if (HasAuthority() && SpriteComp) SpriteComp->SetAnimationState(EHexAnimState::Idle);
+            return;
+        }
 
-			// Adjacence stricte axiale (et tuile existante)
-			const TArray<FHexAxialCoordinates> Neigh = GridRef->GetNeighbors(Cur);
-			const bool bAdjacent = Neigh.Contains(Next);
-			// Debug: liste les voisins et la distance
-			{
-				FString NeighStr;
-				for (const auto &N : Neigh)
-				{
-					NeighStr += FString::Printf(TEXT(" (%d,%d)"), N.Q, N.R);
-				}
-				const int32 Dist = Cur.DistanceTo(Next);
-				UE_LOG(LogTemp, Verbose, TEXT("[Move] Check step %d: (%d,%d)->(%d,%d) | Dist=%d | Neigh:%s"),
-					   CurrentStepIndex, Cur.Q, Cur.R, Next.Q, Next.R, Dist, *NeighStr);
-			}
-			if (!bAdjacent || !GridRef->GetHexTileAt(Next))
-			{
-				UE_LOG(LogTemp, Warning, TEXT("[Move] Step non-voisin ou absent: (%d,%d)->(%d,%d). Stop."),
-					   Cur.Q, Cur.R, Next.Q, Next.R);
-				bIsMoving = false;
-				return;
-			}
-		}
+        AHexTile* NextTile = GridRef->GetHexTileAt(CurrentPath[CurrentStepIndex]);
+        if (!NextTile)
+        {
+            bIsMoving = false;
+            if (HasAuthority() && SpriteComp) SpriteComp->SetAnimationState(EHexAnimState::Idle);
+            return;
+        }
 
-		if (!NextTile)
-		{
-			bIsMoving = false;
-			if (SpriteComp && HasAuthority())
-			{
-				SpriteComp->SetAnimationState(EHexAnimState::Idle);
-				UE_LOG(LogTemp, Warning, TEXT("[Anim] -> Idle (stop)"));
-			}
-			return;
-		}
+        // Sanity: adjacency (optionnel)
+        if (CurrentTile && GridRef)
+        {
+            const FHexAxialCoordinates Cur = CurrentTile->GetAxialCoordinates();
+            const FHexAxialCoordinates Next = CurrentPath[CurrentStepIndex];
+            const bool bAdjacent = GridRef->GetNeighbors(Cur).Contains(Next);
+            if (!bAdjacent || !GridRef->GetHexTileAt(Next))
+            {
+                UE_LOG(LogTemp, Warning, TEXT("[Move] Invalid step: (%d,%d)->(%d,%d). Stop."),
+                       Cur.Q, Cur.R, Next.Q, Next.R);
+                bIsMoving = false;
+                if (HasAuthority() && SpriteComp) SpriteComp->SetAnimationState(EHexAnimState::Idle);
+                return;
+            }
+        }
 
-		StartLocation = GetActorLocation();
-		TargetLocation = NextTile->GetActorLocation();
-		StepElapsed = 0.f;
-		bIsMoving = true;
-	}
+        StartLocation  = GetActorLocation();
+        TargetLocation = NextTile->GetActorLocation();
+        StepElapsed    = 0.f;
+        bIsMoving      = true;
+
+        UpdateSpriteMirrorToward(StartLocation, TargetLocation);
+    }
 }
 
-void AHexPawn::SetCurrentTile(AHexTile *NewTile)
+void AHexPawn::SetCurrentTile(AHexTile* NewTile)
 {
-	CurrentTile = NewTile;
+    CurrentTile = NewTile;
 }
 
-void AHexPawn::InitializePawnStartTile(const FHexAxialCoordinates &StartCoords)
+void AHexPawn::InitializePawnStartTile(const FHexAxialCoordinates& StartCoords)
 {
-	UWorld *World = GetWorld();
-	if (!World)
-		return;
+    UWorld* World = GetWorld();
+    if (!World) return;
 
-	ADemoGameMode *GameMode = World->GetAuthGameMode<ADemoGameMode>();
-	if (!GameMode)
-		return;
+    ADemoGameMode* GameMode = World->GetAuthGameMode<ADemoGameMode>();
+    if (!GameMode) return;
 
-	UHexGridManager *GridManager = GameMode->GetHexGridManager();
-	if (!GridManager)
-		return;
+    UHexGridManager* GM = GameMode->GetHexGridManager();
+    if (!GM) return;
 
-	AHexTile *Tile = GridManager->GetHexTileAt(StartCoords);
-	if (!Tile)
-	{
-		UE_LOG(LogTemp, Error, TEXT("InitializePawnStartTile: No tile at (%d, %d)"), StartCoords.Q, StartCoords.R);
-		return;
-	}
+    AHexTile* Tile = GM->GetHexTileAt(StartCoords);
+    if (!Tile)
+    {
+        UE_LOG(LogTemp, Error, TEXT("InitializePawnStartTile: No tile at (%d,%d)"), StartCoords.Q, StartCoords.R);
+        return;
+    }
 
-	CurrentTile = Tile;
-	SetActorLocation(Tile->GetActorLocation());
-	UE_LOG(LogTemp, Warning, TEXT("Pawn initialized on tile (%d, %d)"), StartCoords.Q, StartCoords.R);
+    CurrentTile = Tile;
+    SetActorLocation(Tile->GetActorLocation());
+    UE_LOG(LogTemp, Warning, TEXT("Pawn initialized on tile (%d,%d)"), StartCoords.Q, StartCoords.R);
 }
 
-void AHexPawn::GetLifetimeReplicatedProps(TArray<FLifetimeProperty> &OutLifetimeProps) const
+void AHexPawn::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
-	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-
-	DOREPLIFETIME(AHexPawn, ReplicatedPath);
+    Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+    DOREPLIFETIME(AHexPawn, ReplicatedPath);
 }
 
 void AHexPawn::OnRep_CurrentPath()
 {
-	// Quand le path répliqué arrive sur client → lancer déplacement
-	if (GridRef && ReplicatedPath.Num() > 0)
-	{
-		StartPathFollowing(ReplicatedPath, GridRef);
-	}
+    if (!GridRef)
+    {
+        if (ADemoGameMode* GM = GetWorld() ? GetWorld()->GetAuthGameMode<ADemoGameMode>() : nullptr)
+        {
+            GridRef = GM->GetHexGridManager();
+        }
+    }
+    if (GridRef && ReplicatedPath.Num() > 0)
+    {
+        StartPathFollowing(ReplicatedPath, GridRef);
+    }
 }
 
-void AHexPawn::ServerRequestMove_Implementation(const TArray<FHexAxialCoordinates> &NewPath)
+void AHexPawn::ServerRequestMove_Implementation(const TArray<FHexAxialCoordinates>& NewPath)
 {
-	ReplicatedPath = NewPath;
-	StartPathFollowing(NewPath, GridRef);
+    ReplicatedPath = NewPath;
+    StartPathFollowing(NewPath, GridRef);
 }
 
-void AHexPawn::PossessedBy(AController *NewController)
+void AHexPawn::PossessedBy(AController* NewController)
 {
-	Super::PossessedBy(NewController);
-	if (APlayerController *PC = Cast<APlayerController>(NewController))
-	{
-		PC->bAutoManageActiveCameraTarget = false;
-		PC->SetViewTarget(this); // serveur
-	}
+    Super::PossessedBy(NewController);
+    if (APlayerController* PC = Cast<APlayerController>(NewController))
+    {
+        PC->bAutoManageActiveCameraTarget = false;
+        PC->SetViewTarget(this);
+    }
 }
 
 void AHexPawn::OnRep_Controller()
 {
-	Super::OnRep_Controller();
-	if (APlayerController *PC = Cast<APlayerController>(GetController()))
-	{
-		PC->bAutoManageActiveCameraTarget = false;
-		PC->ClientSetViewTarget(this); // client
-	}
+    Super::OnRep_Controller();
+    if (APlayerController* PC = Cast<APlayerController>(GetController()))
+    {
+        PC->bAutoManageActiveCameraTarget = false;
+        PC->ClientSetViewTarget(this);
+    }
 }

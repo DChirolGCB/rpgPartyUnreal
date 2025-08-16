@@ -67,8 +67,8 @@ protected:
 
     void InitializePawnStartTile(const FHexAxialCoordinates& InStartCoords);
 
-    UPROPERTY(EditDefaultsOnly, Category = "Hex")
-    TSubclassOf<AHexTile> HexTileClass;
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Hex|Grid", meta=(AllowAbstract="false"))
+    TSubclassOf<class AHexTile> HexTileClass = nullptr;
 
     UPROPERTY(EditDefaultsOnly, Category = "Hex")
     int32 GridRadius = 10;
