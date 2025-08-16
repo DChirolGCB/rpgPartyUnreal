@@ -27,21 +27,36 @@ AHexPawn::AHexPawn()
         RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
     }
 
+    // Constructor
     CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
     CameraBoom->SetupAttachment(RootComponent);
-    CameraBoom->bDoCollisionTest = false;
-    CameraBoom->bUsePawnControlRotation = false;
     CameraBoom->TargetArmLength = CameraHeight;
-    CameraBoom->SetRelativeRotation(FRotator(-50.f, 0.f, 0.f));
+    CameraBoom->bDoCollisionTest = false;
+
+    // Don't take controller or parent rotation
+    CameraBoom->bUsePawnControlRotation = false;
+    CameraBoom->bInheritPitch = false;
+    CameraBoom->bInheritYaw = false;
+    CameraBoom->bInheritRoll = false;
+    CameraBoom->SetUsingAbsoluteRotation(true);
+    CameraBoom->SetRelativeRotation(FRotator(0.f, 0.f, 0.f));
 
     TopDownCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("TopDownCamera"));
     TopDownCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
     TopDownCamera->bUsePawnControlRotation = false;
     TopDownCamera->SetProjectionMode(ECameraProjectionMode::Perspective);
     TopDownCamera->SetFieldOfView(60.f);
+    TopDownCamera->SetAspectRatio(16.f / 9.f);
+    TopDownCamera->SetWorldLocation(FVector(0.f, 0.f, -150.f));
+
+    // (optional, belt & suspenders)
+    bUseControllerRotationYaw = false;
+    bUseControllerRotationPitch = false;
+    bUseControllerRotationRoll = false;
 
     SpriteComp = CreateDefaultSubobject<UHexSpriteComponent>(TEXT("SpriteComp"));
     SpriteComp->SetupAttachment(RootComponent);
+    SpriteComp->bEditableWhenInherited = true;
 }
 
 void AHexPawn::BeginPlay()
@@ -70,14 +85,19 @@ void AHexPawn::BeginPlay()
 
     if (CameraBoom)
     {
-        CameraBoom->TargetArmLength = CameraHeight;
-        CameraBoom->SetRelativeRotation(FRotator(-45.f, 0.f, 0.f));
+        CameraBoom->SetUsingAbsoluteRotation(true);
+        CameraBoom->SetRelativeRotation(FRotator(-50.f, 0.f, 0.f));
+    }
+    if (TopDownCamera)
+    {
+        TopDownCamera->bUsePawnControlRotation = false;
     }
 
     if (APlayerController *PC = UGameplayStatics::GetPlayerController(this, 0))
     {
         PC->bAutoManageActiveCameraTarget = false;
-        PC->SetViewTarget(this);
+        PC->SetViewTargetWithBlend(this, 0.f);
+        PC->SetControlRotation(FRotator::ZeroRotator); // ensure no leftover editor rot
     }
 }
 

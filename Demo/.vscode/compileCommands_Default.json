@@ -24,7 +24,7 @@
 		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
 	},
 	{
-		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\HexSystem\\HexSystem.zip",
+		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Private\\DemoGameMode.cpp",
 		"arguments": [
 			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
 			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Default\\Demo.1.rsp"
@@ -32,7 +32,7 @@
 		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
 	},
 	{
-		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Private\\DemoGameMode.cpp",
+		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Private\\HexAnimationManager.cpp",
 		"arguments": [
 			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
 			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Default\\Demo.1.rsp"
@@ -64,6 +64,14 @@
 		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
 	},
 	{
+		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Private\\HexSpriteComponent.cpp",
+		"arguments": [
+			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Default\\Demo.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
 		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Private\\HexTile.cpp",
 		"arguments": [
 			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
@@ -81,6 +89,22 @@
 	},
 	{
 		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Public\\DemoGameMode.h",
+		"arguments": [
+			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Default\\Demo.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Public\\HexAnimationManager.h",
+		"arguments": [
+			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Default\\Demo.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Public\\HexAnimationTypes.h",
 		"arguments": [
 			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
 			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Default\\Demo.1.rsp"
@@ -120,6 +144,14 @@
 		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
 	},
 	{
+		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Public\\HexSpriteComponent.h",
+		"arguments": [
+			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Default\\Demo.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
 		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Public\\HexTile.h",
 		"arguments": [
 			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
@@ -129,6 +161,22 @@
 	},
 	{
 		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Public\\PathView.h",
+		"arguments": [
+			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Default\\Demo.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Public\\digest.txt",
+		"arguments": [
+			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Default\\Demo.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\digest.txt",
 		"arguments": [
 			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
 			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Default\\Demo.1.rsp"

@@ -7,18 +7,16 @@
 #include "HexSpriteComponent.generated.h"
 
 
-UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
+UCLASS(ClassGroup=(Paper2D), meta=(BlueprintSpawnableComponent))
 class DEMO_API UHexSpriteComponent : public UPaperFlipbookComponent
 {
     GENERATED_BODY()
 public:
     UHexSpriteComponent();
 
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Hex|Anim")
-    UPaperFlipbook* IdleAnim = nullptr;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Hex|Anim") UPaperFlipbook* IdleAnim;
 
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Hex|Anim")
-    UPaperFlipbook* WalkAnim = nullptr;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Hex|Anim") UPaperFlipbook* WalkAnim;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, ReplicatedUsing=OnRep_AnimState, Category="Hex|Anim")
     EHexAnimState CurrentAnimState = EHexAnimState::Idle;
