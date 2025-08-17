@@ -166,6 +166,11 @@ void AHexPawn::Tick(float DeltaTime)
     {
         if (HasAuthority() && SpriteComp)
             SpriteComp->SetAnimationState(EHexAnimState::Idle);
+
+        if (ADemoGameMode *GM = GetWorld()->GetAuthGameMode<ADemoGameMode>())
+        {
+            GM->UpdateReachableVisibility(3);
+        }
         return;
     }
 
@@ -211,6 +216,10 @@ void AHexPawn::Tick(float DeltaTime)
             bIsMoving = false;
             if (HasAuthority() && SpriteComp)
                 SpriteComp->SetAnimationState(EHexAnimState::Idle);
+            if (ADemoGameMode *GM = GetWorld()->GetAuthGameMode<ADemoGameMode>())
+            {
+                GM->UpdateReachableVisibility(3);
+            }
             return;
         }
 
@@ -220,6 +229,10 @@ void AHexPawn::Tick(float DeltaTime)
             bIsMoving = false;
             if (HasAuthority() && SpriteComp)
                 SpriteComp->SetAnimationState(EHexAnimState::Idle);
+            if (ADemoGameMode *GM = GetWorld()->GetAuthGameMode<ADemoGameMode>())
+            {
+                GM->UpdateReachableVisibility(3);
+            }
             return;
         }
 
@@ -236,6 +249,10 @@ void AHexPawn::Tick(float DeltaTime)
                 bIsMoving = false;
                 if (HasAuthority() && SpriteComp)
                     SpriteComp->SetAnimationState(EHexAnimState::Idle);
+                if (ADemoGameMode *GM = GetWorld()->GetAuthGameMode<ADemoGameMode>())
+                {
+                    GM->UpdateReachableVisibility(3);
+                }
                 return;
             }
         }

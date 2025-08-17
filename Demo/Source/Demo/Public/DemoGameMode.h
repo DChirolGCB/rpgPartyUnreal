@@ -65,6 +65,9 @@ public:
     UPROPERTY(EditAnywhere, Category="Hex|Start")
     FHexAxialCoordinates StartCoords = FHexAxialCoordinates(0, 6);
 
+    UFUNCTION(BlueprintCallable, Category="Hex|Visibility")
+    void UpdateReachableVisibility(int32 MaxSteps);
+
 protected:
     /** Engine lifecycle */
     virtual void BeginPlay() override;

@@ -23,6 +23,7 @@ public:
 
     // --- API ---
 
+    void ForEachTile(TFunctionRef<void(const FHexAxialCoordinates&, AHexTile*)> Fn) const;
     /** Génère la grille (rayon en tuiles, et classe de tuile à instancier) */
     UFUNCTION(BlueprintCallable, Category = "Hex|Generation")
     void InitializeGrid(int32 Radius, TSubclassOf<AHexTile> TileClass);

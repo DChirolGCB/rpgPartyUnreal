@@ -51,64 +51,78 @@ TArray<FHexAxialCoordinates> UHexPathFinder::FindPath(const FHexAxialCoordinates
     TArray<FHexAxialCoordinates> Empty;
     if (!GridRef) return Empty;
 
-    if (Start == Goal) { TArray<FHexAxialCoordinates> P; P.Add(Start); return P; }
-
-    auto Heuristic = [this](const FHexAxialCoordinates& A, const FHexAxialCoordinates& B)
+    if (Start == Goal)
     {
-        return GridRef->AxialDistance(A, B);
-    };
+        TArray<FHexAxialCoordinates> P; P.Add(Start);
+        return P;
+    }
 
     TSet<FHexAxialCoordinates> Open, Closed;
-    TMap<FHexAxialCoordinates,FHexAxialCoordinates> Parent;
-    TMap<FHexAxialCoordinates,int32> GScore, FScore;
+    TMap<FHexAxialCoordinates, FHexAxialCoordinates> Parent;
+    TMap<FHexAxialCoordinates, int32> GScore, FScore;
 
     Open.Add(Start);
+    Parent.Add(Start, Start);
     GScore.Add(Start, 0);
     FScore.Add(Start, Heuristic(Start, Goal));
 
-    TArray<FHexAxialCoordinates> Neigh;
-
     while (Open.Num() > 0)
     {
-        // pick best by F asc then G desc
-        FHexAxialCoordinates Current = *Open.CreateIterator();
-        int32 BestF = *FScore.Find(Current);
-        int32 BestG = *GScore.Find(Current);
+        // Choisir le noeud avec F-score min
+        FHexAxialCoordinates Current = *Open.CreateConstIterator();
+        int32 BestF = FScore.FindRef(Current);
         for (const FHexAxialCoordinates& N : Open)
         {
-            const int32* FN = FScore.Find(N);
-            const int32* GN = GScore.Find(N);
-            if (!FN || !GN) continue;
-            if (*FN < BestF || (*FN == BestF && *GN > BestG)) { BestF = *FN; BestG = *GN; Current = N; }
+            const int32 FN = FScore.FindRef(N);
+            if (FN < BestF)
+            {
+                BestF = FN;
+                Current = N;
+            }
         }
 
         if (Current == Goal)
         {
-            TArray<FHexAxialCoordinates> Path;
-            ReconstructPath(Parent, Start, Goal, Path);
-            return Path;
+            TArray<FHexAxialCoordinates> OutPath;
+            ReconstructPath(Parent, Start, Goal, OutPath);
+
+            // Limite de déplacement par tour: 6 pas (donc 7 nœuds Start+6)
+            if (OutPath.Num() > 0)
+            {
+                const int32 MaxStepsPerTurn = 6; // arbitraire pour l’instant
+                const int32 MaxLen = FMath::Max(1, MaxStepsPerTurn + 1); // +1 pour inclure Start
+                if (OutPath.Num() > MaxLen)
+                {
+                    OutPath.SetNum(MaxLen, /*bAllowShrinking*/ false);
+                }
+            }
+            return OutPath;
         }
 
         Open.Remove(Current);
         Closed.Add(Current);
 
-        Neigh.Reset();
-        GetValidNeighbors(Current, Neigh);  // <-- correct ici
+        // Voisins valides
+        TArray<FHexAxialCoordinates> Neighbors;
+        GetValidNeighbors(Current, Neighbors);
 
-        const int32* GcurPtr = GScore.Find(Current);
-        if (!GcurPtr) continue;
-        const int32 Gcur = *GcurPtr;
-
-        for (const FHexAxialCoordinates& N : Neigh)
+        const int32 GCur = GScore.FindRef(Current);
+        for (const FHexAxialCoordinates& N : Neighbors)
         {
             if (Closed.Contains(N)) continue;
 
-            const int32 TentativeG = Gcur + 1;
+            const int32 TentativeG = GCur + 1;
             bool bBetter = false;
 
-            if (!Open.Contains(N)) { Open.Add(N); bBetter = true; }
-            else if (const int32* Gold = GScore.Find(N)) { bBetter = TentativeG < *Gold; }
-            else { bBetter = true; }
+            if (!Open.Contains(N))
+            {
+                Open.Add(N);
+                bBetter = true;
+            }
+            else if (TentativeG < GScore.FindRef(N))
+            {
+                bBetter = true;
+            }
 
             if (bBetter)
             {
