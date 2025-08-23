@@ -2,6 +2,7 @@
 #include "Components/TextBlock.h"
 #include "CombatComponent.h"
 #include "Engine/World.h"
+#include "Components/ProgressBar.h"
 #include "TimerManager.h"
 
 UPlayerStatsWidget::UPlayerStatsWidget(const FObjectInitializer& Obj)
@@ -38,23 +39,15 @@ void UPlayerStatsWidget::RefreshTexts()
     if (!Combat) return;
     const auto& S = Combat->GetStats();
 
-    if (HPText)
-        HPText->SetText(FText::FromString(
-            FString::Printf(TEXT("HP: %d / %d"), S.HP, S.MaxHP)));
+    if (HPBar)
+    {
+        const float pct = (S.MaxHP > 0) ? float(S.HP) / float(S.MaxHP) : 0.f;
+        HPBar->SetPercent(pct);
+    }
 
-    if (AtkText)
-        AtkText->SetText(FText::FromString(
-            FString::Printf(TEXT("ATK: %d"), S.Attack)));
-
-    if (DefText)
-        DefText->SetText(FText::FromString(
-            FString::Printf(TEXT("DEF: %d"), S.Defense)));
-
-    if (XpText)
-        XpText->SetText(FText::FromString(
-            FString::Printf(TEXT("XP: %d / %d"), S.XP, S.XPToNext)));
-
-    if (LvlText)
-        LvlText->SetText(FText::FromString(
-            FString::Printf(TEXT("LVL: %d"), S.Level)));
+    if (HPText)  HPText->SetText(FText::FromString(FString::Printf(TEXT("HP: %d / %d"), S.HP, S.MaxHP)));
+    if (AtkText) AtkText->SetText(FText::FromString(FString::Printf(TEXT("ATK: %d"), S.Attack)));
+    if (DefText) DefText->SetText(FText::FromString(FString::Printf(TEXT("DEF: %d"), S.Defense)));
+    if (XpText)  XpText->SetText(FText::FromString(FString::Printf(TEXT("XP: %d / %d"), S.XP, S.XPToNext)));
+    if (LvlText) LvlText->SetText(FText::FromString(FString::Printf(TEXT("LVL: %d"), S.Level)));
 }

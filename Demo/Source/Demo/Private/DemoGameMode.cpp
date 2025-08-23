@@ -6,6 +6,7 @@
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
+#include "Engine/Texture2D.h"
 #include "UObject/ConstructorHelpers.h"
 
 #include "BattleWidget.h"
@@ -17,6 +18,10 @@
 #include "PathView.h"
 #include "PlayerStatsWidget.h"
 #include "LoadoutEditorWidget.h"
+#include "HexEnemyPawn.h" // <-- required
+#include "EnemyDefinition.h"
+#include "BattleWidget.h"
+#include "Engine/Texture2D.h"
 
 namespace
 {
@@ -236,6 +241,13 @@ ADemoGameMode::ADemoGameMode()
     {
         HexTileClass = TileBP.Class;
     }
+
+    static ConstructorHelpers::FObjectFinder<UEnemyDefinition> Gob(
+        TEXT("/Game/Datasets/DA_Goblux.DA_Goblux")); // adjust path if different
+    if (Gob.Succeeded())
+    {
+        EnemyCatalog.Add(TEXT("goblux"), Gob.Object);
+    }
 }
 
 void ADemoGameMode::BeginPlay()
@@ -276,6 +288,7 @@ void ADemoGameMode::BeginPlay()
             }
         }
     }
+    EnemyRNG.Initialize(int32(FDateTime::UtcNow().GetTicks() & 0xFFFFFFFF));
 
     UWorld *W = GetWorld();
     if (!W)
@@ -738,52 +751,104 @@ void ADemoGameMode::UpdateReachableVisibility(int32 MaxSteps)
 
 void ADemoGameMode::StartTestBattle()
 {
-    if (!BattleWidgetClass)
-        return;
-
-    if (UBattleWidget *W = CreateWidget<UBattleWidget>(GetWorld(), BattleWidgetClass))
+    UE_LOG(LogTemp, Warning, TEXT("[Battle] GM=%s  CatalogSize=%d"),
+           *GetClass()->GetName(), EnemyCatalog.Num());
+    for (const auto &Kvp : EnemyCatalog)
     {
-        W->AddToViewport(20);
-        BattleWidget = W;
-        APlayerController *PC = GetWorld()->GetFirstPlayerController();
-        if (PC)
+        UE_LOG(LogTemp, Warning, TEXT("[Battle] Catalog key=%s -> asset=%s"),
+               *Kvp.Key.ToString(), *GetNameSafe(Kvp.Value.Get()));
+    }
+
+    UBattleWidget *W = CreateWidget<UBattleWidget>(GetWorld(), BattleWidgetClass);
+    if (!W)
+        return;
+    W->AddToViewport(20);
+
+    AHexPawn *PlayerPawn = GetPlayerPawnTyped();
+    UCombatComponent *PlayerCombat = PlayerPawn ? PlayerPawn->GetCombat() : nullptr;
+
+    // Choose enemy id
+    const FName EnemyId = PickRandomEnemyIdFromCatalog();
+    if (EnemyId.IsNone())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("EnemyCatalog empty"));
+        return;
+    }
+    UE_LOG(LogTemp, Warning, TEXT("[Battle] Picked id=%s"), *EnemyId.ToString());
+    // Spawn enemy with data BEFORE BeginPlay
+    FVector BaseLoc = PlayerPawn ? PlayerPawn->GetActorLocation() : FVector::ZeroVector;
+    FTransform X(FRotator::ZeroRotator, BaseLoc + FVector(2000, 0, 0));
+
+    UClass *SpawnClass = EnemyPawnClass ? EnemyPawnClass.Get() : AHexEnemyPawn::StaticClass();
+    AHexEnemyPawn *EnemyPawn = GetWorld()->SpawnActorDeferred<AHexEnemyPawn>(SpawnClass, X);
+    if (EnemyPawn)
+    {
+        if (TSoftObjectPtr<UEnemyDefinition> *Entry = EnemyCatalog.Find(EnemyId))
         {
-            FInputModeUIOnly Mode;
-            Mode.SetWidgetToFocus(W->TakeWidget());
+            EnemyPawn->EnemyData = *Entry;
+
+            if (UEnemyDefinition *Def = Entry->LoadSynchronous())
+            {
+                if (UTexture2D *Tex = Def->Portrait.LoadSynchronous())
+                {
+                    W->SetEnemyPortrait(Tex);
+                }
+                W->SetVictoryXP(Def->XPReward);   // <-- pass reward
+            }
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("EnemyCatalog has no entry for id=%s"), *EnemyId.ToString());
+        }
+        UGameplayStatics::FinishSpawningActor(EnemyPawn, X);
+        APlayerController *PC = GetWorld()->GetFirstPlayerController();
+        if (PC && PlayerPawn)
+        {
+            PC->bAutoManageActiveCameraTarget = false; // <- replace the bad call
+            if (PC->GetPawn() != PlayerPawn)
+                PC->Possess(PlayerPawn);
+            PC->SetViewTargetWithBlend(PlayerPawn, 0.0f);
+            PC->bShowMouseCursor = true;
+
+            FInputModeGameAndUI Mode;
             Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
             PC->SetInputMode(Mode);
-            PC->bShowMouseCursor = true;
-            PC->SetIgnoreLookInput(true);
-            PC->SetIgnoreMoveInput(true);
-        }
-        AHexPawn *PlayerPawn = GetPlayerPawnTyped();
-        UCombatComponent *PlayerCombat = PlayerPawn ? PlayerPawn->GetCombat() : nullptr;
-
-        AHexPawn *EnemyPawn = GetWorld()->SpawnActor<AHexPawn>();
-        UCombatComponent *EnemyCombat = EnemyPawn ? EnemyPawn->GetCombat() : nullptr;
-
-        if (W && PlayerCombat && EnemyCombat)
-        {
-            W->SetSides(PlayerCombat, EnemyCombat);
         }
     }
+
+    W->SetSides(PlayerCombat, EnemyPawn ? EnemyPawn->GetCombat() : nullptr);
 }
 
 void ADemoGameMode::OpenLoadoutEditor()
 {
-    if (!LoadoutWidgetClass) return;
+    if (!LoadoutWidgetClass)
+        return;
 
-    if (ULoadoutEditorWidget* W = CreateWidget<ULoadoutEditorWidget>(GetWorld(), LoadoutWidgetClass))
+    if (ULoadoutEditorWidget *W = CreateWidget<ULoadoutEditorWidget>(GetWorld(), LoadoutWidgetClass))
     {
         W->AddToViewport(15);
         W->SetAlignmentInViewport(FVector2D(0.5f, 0.5f));
         W->SetAnchorsInViewport(FAnchors(0.5f, 0.5f, 0.5f, 0.5f));
-        W->SetPositionInViewport(FVector2D(0,0));
+        W->SetPositionInViewport(FVector2D(0, 0));
         W->SetDesiredSizeInViewport(FVector2D(700, 480));
 
-        if (AHexPawn* P = GetPlayerPawnTyped())
+        if (AHexPawn *P = GetPlayerPawnTyped())
         {
             W->SetCombat(P->GetCombat());
         }
     }
+}
+
+FName ADemoGameMode::PickRandomEnemyIdFromCatalog() const
+{
+    TArray<FName> Keys;
+    EnemyCatalog.GetKeys(Keys);
+    if (Keys.Num() == 0)
+        return NAME_None;
+    const int32 idx = FMath::RandHelper(Keys.Num());
+    UE_LOG(LogTemp, Log, TEXT("Catalog keys: %s -> pick[%d]=%s"),
+           *FString::JoinBy(Keys, TEXT(","), [](const FName &N)
+                            { return N.ToString(); }),
+           idx, *Keys[idx].ToString());
+    return Keys[idx];
 }

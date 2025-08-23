@@ -8,7 +8,7 @@ UCombatComponent::UCombatComponent()
 	
 	// defaults (can be overridden in BP defaults)
     Stats.Level = 1; Stats.MaxHP = 30; Stats.HP = 30;
-    Stats.Attack = 7; Stats.Defense = 3; Stats.XP = 0; Stats.XPToNext = 50;
+    Stats.Attack = 20; Stats.Defense = 3; Stats.XP = 0; Stats.XPToNext = 50;
 
     MaxSlots = 5;
     Loadout.Init(FBattleActionSlot{}, MaxSlots);

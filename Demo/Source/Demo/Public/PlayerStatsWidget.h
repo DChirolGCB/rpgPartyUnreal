@@ -1,6 +1,7 @@
 #pragma once
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "Components/ProgressBar.h" 
 #include "PlayerStatsWidget.generated.h"
 
 class UTextBlock;
@@ -35,4 +36,5 @@ public: // BindWidget references (create in BP)
     UPROPERTY(meta=(BindWidget)) UTextBlock* DefText = nullptr;
     UPROPERTY(meta=(BindWidget)) UTextBlock* XpText = nullptr;
     UPROPERTY(meta=(BindWidget)) UTextBlock* LvlText = nullptr;
+    UPROPERTY(meta=(BindWidget)) class UProgressBar* HPBar = nullptr;
 };

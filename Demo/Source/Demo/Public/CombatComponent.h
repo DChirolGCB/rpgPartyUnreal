@@ -52,6 +52,7 @@ public:
     UFUNCTION(BlueprintPure, Category="Battle") const TArray<FBattleActionSlot>& GetLoadout() const { return Loadout; }
     UFUNCTION(BlueprintCallable, Category="Battle") void SetSlotAction(int32 Index, EBattleAction Action, int32 Cost = 1);
 	UFUNCTION(BlueprintCallable, Category="Battle") void SetLoadout(const TArray<FBattleActionSlot>& In);
+    UFUNCTION(BlueprintCallable, Category="Combat") void SetStats(const FCombatStats& In) { Stats = In; Stats.HP = FMath::Clamp(Stats.HP, 0, Stats.MaxHP); }
 
 protected:
     virtual void BeginPlay() override;  // <-- add this

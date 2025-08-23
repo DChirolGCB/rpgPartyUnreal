@@ -4,31 +4,39 @@ Directory structure:
     ├── Demo.cpp
     ├── Demo.h
     ├── Private/
+    │   ├── ActionEntryWidget.cpp
     │   ├── BattleActions.cpp
     │   ├── BattleWidget.cpp
     │   ├── CombatComponent.cpp
     │   ├── DemoGameMode.cpp
     │   ├── HexAnimationManager.cpp
+    │   ├── HexEnemyPawn.cpp
     │   ├── HexGridManager.cpp
     │   ├── HexPathFinder.cpp
     │   ├── HexPawn.cpp
     │   ├── HexSpriteComponent.cpp
     │   ├── HexTile.cpp
+    │   ├── LoadoutEditorWidget.cpp
     │   ├── PathView.cpp
     │   └── PlayerStatsWidget.cpp
     └── Public/
+        ├── ActionDragOperation.h
+        ├── ActionEntryWidget.h
         ├── BattleActions.h
         ├── BattleWidget.h
         ├── CombatComponent.h
         ├── DemoGameMode.h
+        ├── EnemyDefinition.h
         ├── HexAnimationManager.h
         ├── HexAnimationTypes.h
         ├── HexCoordinates.h
+        ├── HexEnemyPawn.h
         ├── HexGridManager.h
         ├── HexPathFinder.h
         ├── HexPawn.h
         ├── HexSpriteComponent.h
         ├── HexTile.h
+        ├── LoadoutEditorWidget.h
         ├── PathView.h
         └── PlayerStatsWidget.h
 
@@ -89,17 +97,52 @@ FILE: Demo.h
 
 
 ================================================
+FILE: Private/ActionEntryWidget.cpp
+================================================
+#include "ActionEntryWidget.h"
+#include "Components/TextBlock.h"
+#include "BattleActions.h"
+#include "ActionDragOperation.h"
+#include "Blueprint/WidgetBlueprintLibrary.h"  // DetectDragIfPressed
+#include "InputCoreTypes.h"                    // EKeys
+
+UActionEntryWidget::UActionEntryWidget(const FObjectInitializer& O) : Super(O) {}
+
+void UActionEntryWidget::NativeConstruct()
+{
+    Super::NativeConstruct();
+    if (Action == EBattleAction::None && DefaultAction != EBattleAction::None)
+        Action = DefaultAction;
+    RefreshLabel();
+}
+
+void UActionEntryWidget::RefreshLabel()
+{
+    if (Label) Label->SetText(UBattleActionLibrary::ActionToText(Action));
+}
+
+FReply UActionEntryWidget::NativeOnPreviewMouseButtonDown(const FGeometry& Geo, const FPointerEvent& E)
+{
+    if (E.GetEffectingButton() == EKeys::LeftMouseButton)
+        return UWidgetBlueprintLibrary::DetectDragIfPressed(E, this, EKeys::LeftMouseButton).NativeReply;
+    return Super::NativeOnPreviewMouseButtonDown(Geo, E);
+}
+
+void UActionEntryWidget::NativeOnDragDetected(const FGeometry& Geo, const FPointerEvent& E, UDragDropOperation*& OutOp)
+{
+    UActionDragOperation* Op = NewObject<UActionDragOperation>(this);
+    Op->Payload = this;
+    Op->DefaultDragVisual = this; // ghost preview
+    Op->Action = Action;
+    OutOp = Op;
+}
+
+
+
+================================================
 FILE: Private/BattleActions.cpp
 ================================================
-#include "BattleActions.h"
-
-BattleActions::BattleActions()
-{
-}
-
-BattleActions::~BattleActions()
-{
-}
+#include "BattleActions.h"  // no extra code needed
 
 
 
@@ -109,11 +152,41 @@ FILE: Private/BattleWidget.cpp
 #include "BattleWidget.h"
 #include "Components/ProgressBar.h"
 #include "Components/TextBlock.h"
-#include "BattleActions.h"
 #include "Components/Image.h"
+#include "Components/Button.h"
 #include "CombatComponent.h"
+#include "BattleActions.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
+
+namespace
+{
+    inline void SetHP(UProgressBar* Bar, UTextBlock* Text, int32 HP, int32 MaxHP)
+    {
+        if (Bar)
+        {
+            const float Pct = MaxHP > 0 ? float(HP) / float(MaxHP) : 0.f;
+            Bar->SetPercent(Pct);
+        }
+        if (Text)
+        {
+            Text->SetText(FText::FromString(FString::Printf(TEXT("HP: %d / %d"), HP, MaxHP)));
+        }
+    }
+
+    inline void SetActs(const TArray<FBattleActionSlot>& L,
+                        UTextBlock* T0, UTextBlock* T1, UTextBlock* T2, UTextBlock* T3, UTextBlock* T4)
+    {
+        auto SetOne = [](UTextBlock* T, const FBattleActionSlot& S)
+        { if (T) T->SetText(UBattleActionLibrary::ActionToText(S.Action)); };
+
+        SetOne(T0, L.IsValidIndex(0)? L[0] : FBattleActionSlot{});
+        SetOne(T1, L.IsValidIndex(1)? L[1] : FBattleActionSlot{});
+        SetOne(T2, L.IsValidIndex(2)? L[2] : FBattleActionSlot{});
+        SetOne(T3, L.IsValidIndex(3)? L[3] : FBattleActionSlot{});
+        SetOne(T4, L.IsValidIndex(4)? L[4] : FBattleActionSlot{});
+    }
+}
 
 UBattleWidget::UBattleWidget(const FObjectInitializer& O) : Super(O) {}
 
@@ -122,66 +195,219 @@ void UBattleWidget::SetSides(UCombatComponent* InPlayer, UCombatComponent* InEne
     PlayerCombat = InPlayer;
     EnemyCombat  = InEnemy;
     Refresh();
+    StartAutoBattle();
+}
+
+void UBattleWidget::StartAutoBattle()
+{
+    if (!PlayerCombat || !EnemyCombat) return;
+
+    CurrentIndex   = 0;
+    bPlayerTurn    = true;
+    bBattleRunning = true;
+
+    if (BtnQuit) BtnQuit->SetIsEnabled(false); // enable when battle ends
+
+    UpdateHighlights();
+    if (UWorld* W = GetWorld())
+    {
+        W->GetTimerManager().SetTimer(ActionTimer, this, &UBattleWidget::StepAction, 0.8f, true, 0.0f);
+    }
+}
+
+void UBattleWidget::StopAutoBattle()
+{
+    bBattleRunning = false;
+    if (UWorld* W = GetWorld())
+    {
+        W->GetTimerManager().ClearTimer(ActionTimer);
+    }
+    if (BtnQuit) BtnQuit->SetIsEnabled(true);
 }
 
 void UBattleWidget::NativeConstruct()
 {
     Super::NativeConstruct();
+    if (BtnQuit) BtnQuit->OnClicked.AddDynamic(this, &UBattleWidget::OnQuitClicked);
+
     Refresh();
+    UpdateHighlights();
+
     if (UWorld* W = GetWorld())
     {
-        W->GetTimerManager().SetTimer(RefreshTimer, this, &UBattleWidget::Refresh, 0.1f, true);
+        W->GetTimerManager().SetTimer(RefreshTimer, this, &UBattleWidget::Refresh, 0.10f, true);
     }
 }
 
 void UBattleWidget::NativeDestruct()
 {
-    if (UWorld* W = GetWorld()) { W->GetTimerManager().ClearTimer(RefreshTimer); }
+    if (UWorld* W = GetWorld())
+    {
+        W->GetTimerManager().ClearTimer(RefreshTimer);
+        W->GetTimerManager().ClearTimer(ActionTimer);
+    }
     Super::NativeDestruct();
-}
-
-static void SetHP(UProgressBar* Bar, UTextBlock* Text, int32 HP, int32 MaxHP)
-{
-    if (Bar)
-    {
-        const float Pct = (MaxHP > 0) ? float(HP) / float(MaxHP) : 0.f;
-        Bar->SetPercent(Pct);
-    }
-    if (Text)
-    {
-        Text->SetText(FText::FromString(FString::Printf(TEXT("HP: %d / %d"), HP, MaxHP)));
-    }
 }
 
 void UBattleWidget::Refresh()
 {
     if (PlayerCombat)
     {
-        const auto& S = PlayerCombat->GetStats();
+        const FCombatStats& S = PlayerCombat->GetStats();
         SetHP(PlayerHPBar, PlayerHPText, S.HP, S.MaxHP);
         SetActs(PlayerCombat->GetLoadout(), PlayerAct0, PlayerAct1, PlayerAct2, PlayerAct3, PlayerAct4);
     }
     if (EnemyCombat)
     {
-        const auto& S = EnemyCombat->GetStats();
+        const FCombatStats& S = EnemyCombat->GetStats();
         SetHP(EnemyHPBar, EnemyHPText, S.HP, S.MaxHP);
         SetActs(EnemyCombat->GetLoadout(), EnemyAct0, EnemyAct1, EnemyAct2, EnemyAct3, EnemyAct4);
     }
+    UpdateHighlights();
+}
+static void ResetColor(UTextBlock* T)
+{
+    if (T) T->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+}
+static void Highlight(UTextBlock* T)
+{
+    if (T) T->SetColorAndOpacity(FSlateColor(FLinearColor(1.f, 0.85f, 0.2f, 1.f))); // soft yellow
 }
 
-static void SetActs(const TArray<FBattleActionSlot>& L,
-                    UTextBlock* T0,UTextBlock* T1,UTextBlock* T2,UTextBlock* T3,UTextBlock* T4)
+UTextBlock* UBattleWidget::PlayerActTextAt(int32 Index) const
 {
-    auto SetOne = [](UTextBlock* T, const FBattleActionSlot& S)
+    switch (Index)
     {
-        if (T) T->SetText(UBattleActionLibrary::ActionToText(S.Action));
-    };
-    SetOne(T0, L.IsValidIndex(0)? L[0] : FBattleActionSlot{});
-    SetOne(T1, L.IsValidIndex(1)? L[1] : FBattleActionSlot{});
-    SetOne(T2, L.IsValidIndex(2)? L[2] : FBattleActionSlot{});
-    SetOne(T3, L.IsValidIndex(3)? L[3] : FBattleActionSlot{});
-    SetOne(T4, L.IsValidIndex(4)? L[4] : FBattleActionSlot{});
+        case 0: return PlayerAct0;
+        case 1: return PlayerAct1;
+        case 2: return PlayerAct2;
+        case 3: return PlayerAct3;
+        case 4: return PlayerAct4;
+        default: return nullptr;
+    }
 }
+UTextBlock* UBattleWidget::EnemyActTextAt(int32 Index) const
+{
+    switch (Index)
+    {
+        case 0: return EnemyAct0;
+        case 1: return EnemyAct1;
+        case 2: return EnemyAct2;
+        case 3: return EnemyAct3;
+        case 4: return EnemyAct4;
+        default: return nullptr;
+    }
+}
+
+void UBattleWidget::UpdateHighlights()
+{
+    // clear all
+    ResetColor(PlayerAct0); ResetColor(PlayerAct1); ResetColor(PlayerAct2); ResetColor(PlayerAct3); ResetColor(PlayerAct4);
+    ResetColor(EnemyAct0);  ResetColor(EnemyAct1);  ResetColor(EnemyAct2);  ResetColor(EnemyAct3);  ResetColor(EnemyAct4);
+
+    if (!bBattleRunning) return;
+
+    if (bPlayerTurn)
+    {
+        Highlight(PlayerActTextAt(CurrentIndex));
+    }
+    else
+    {
+        Highlight(EnemyActTextAt(CurrentIndex));
+    }
+}
+
+void UBattleWidget::DoAction(UCombatComponent* Source, UCombatComponent* Target, const FBattleActionSlot& ActionSlot)
+{
+    if (!Source) return;
+
+    switch (ActionSlot.Action)
+    {
+        case EBattleAction::Attack:
+            if (Target)
+            {
+                const int32 dmg = Source->GetStats().Attack;
+                Target->ApplyDamage(dmg);
+            }
+            break;
+
+        case EBattleAction::Heal:
+            Source->Heal(3);
+            break;
+
+        default: break;
+    }
+}
+
+void UBattleWidget::StepAction()
+{
+    if (!bBattleRunning || !PlayerCombat || !EnemyCombat) { StopAutoBattle(); return; }
+
+    if (PlayerCombat->GetStats().HP <= 0 || EnemyCombat->GetStats().HP <= 0)
+    { StopAutoBattle(); return; }
+
+    const TArray<FBattleActionSlot>& PL = PlayerCombat->GetLoadout();
+    const TArray<FBattleActionSlot>& EL = EnemyCombat->GetLoadout();
+    const int32 MaxTurns = FMath::Max(PL.Num(), EL.Num());
+    if (CurrentIndex >= MaxTurns) { StopAutoBattle(); return; }
+
+    // highlight current
+    UpdateHighlights();
+
+    if (bPlayerTurn)
+    {
+        if (PL.IsValidIndex(CurrentIndex))
+            DoAction(PlayerCombat, EnemyCombat, PL[CurrentIndex]);
+
+        if (EnemyCombat->GetStats().HP <= 0) { StopAutoBattle(); return; }
+        bPlayerTurn = false;
+        return;
+    }
+    else
+    {
+        if (EL.IsValidIndex(CurrentIndex))
+            DoAction(EnemyCombat, PlayerCombat, EL[CurrentIndex]);
+
+        if (PlayerCombat->GetStats().HP <= 0) { StopAutoBattle(); return; }
+        bPlayerTurn = true;
+        ++CurrentIndex;
+        if (CurrentIndex >= MaxTurns) { StopAutoBattle(); return; }
+    }
+}
+
+void UBattleWidget::OnQuitClicked()
+{
+    StopAutoBattle();
+
+    if (APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr)
+    {
+        FInputModeGameAndUI Mode;                                  // keep UI-style input
+        Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+        PC->SetInputMode(Mode);
+        PC->bShowMouseCursor = true;                               // keep cursor visible
+    }
+
+    RemoveFromParent();
+}
+
+void UBattleWidget::SetEnemyPortrait(UTexture2D* Tex)
+{
+    if (EnemyPortrait && Tex)
+    {
+        EnemyPortrait->SetBrushFromTexture(Tex, /*bMatchSize*/true);
+        EnemyPortrait->SetColorAndOpacity(FLinearColor::White); // in case tint was non-white
+    }
+}
+
+void UBattleWidget::SetPlayerPortrait(UTexture2D* Tex)
+{
+    if (PlayerPortrait && Tex)
+    {
+        PlayerPortrait->SetBrushFromTexture(Tex, true);
+        PlayerPortrait->SetColorAndOpacity(FLinearColor::White);
+    }
+}
+
 
 
 ================================================
@@ -197,7 +423,7 @@ UCombatComponent::UCombatComponent()
 	
 	// defaults (can be overridden in BP defaults)
     Stats.Level = 1; Stats.MaxHP = 30; Stats.HP = 30;
-    Stats.Attack = 7; Stats.Defense = 3; Stats.XP = 0; Stats.XPToNext = 50;
+    Stats.Attack = 20; Stats.Defense = 3; Stats.XP = 0; Stats.XPToNext = 50;
 
     MaxSlots = 5;
     Loadout.Init(FBattleActionSlot{}, MaxSlots);
@@ -231,7 +457,7 @@ void UCombatComponent::SetLoadout(const TArray<FBattleActionSlot>& In)
 
 void UCombatComponent::ApplyDamage(int32 RawDamage)
 {
-    const int32 dmg = FMath::Max(0, RawDamage - Stats.Defense);
+    const int32 dmg = FMath::Max(0, RawDamage - (Stats.Defense / 2));
     Stats.HP = FMath::Clamp(Stats.HP - dmg, 0, Stats.MaxHP);
 }
 
@@ -255,6 +481,15 @@ void UCombatComponent::TryLevelUp()
     }
 }
 
+void UCombatComponent::SetSlotAction(int32 Index, EBattleAction Action, int32 Cost)
+{
+    if (Cost <= 0) Cost = 1;
+    if (Loadout.Num() != MaxSlots) Loadout.SetNum(MaxSlots);
+    if (!Loadout.IsValidIndex(Index)) return;
+    Loadout[Index].Action  = Action;
+    Loadout[Index].SlotCost = Cost;
+}
+
 
 
 ================================================
@@ -268,6 +503,7 @@ FILE: Private/DemoGameMode.cpp
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
+#include "Engine/Texture2D.h"
 #include "UObject/ConstructorHelpers.h"
 
 #include "BattleWidget.h"
@@ -278,6 +514,11 @@ FILE: Private/DemoGameMode.cpp
 #include "HexTile.h"
 #include "PathView.h"
 #include "PlayerStatsWidget.h"
+#include "LoadoutEditorWidget.h"
+#include "HexEnemyPawn.h" // <-- required
+#include "EnemyDefinition.h"
+#include "BattleWidget.h"
+#include "Engine/Texture2D.h"
 
 namespace
 {
@@ -497,6 +738,13 @@ ADemoGameMode::ADemoGameMode()
     {
         HexTileClass = TileBP.Class;
     }
+
+    static ConstructorHelpers::FObjectFinder<UEnemyDefinition> Gob(
+        TEXT("/Game/Datasets/DA_Goblux.DA_Goblux")); // adjust path if different
+    if (Gob.Succeeded())
+    {
+        EnemyCatalog.Add(TEXT("goblux"), Gob.Object);
+    }
 }
 
 void ADemoGameMode::BeginPlay()
@@ -537,6 +785,7 @@ void ADemoGameMode::BeginPlay()
             }
         }
     }
+    EnemyRNG.Initialize(int32(FDateTime::UtcNow().GetTicks() & 0xFFFFFFFF));
 
     UWorld *W = GetWorld();
     if (!W)
@@ -1002,32 +1251,84 @@ void ADemoGameMode::StartTestBattle()
     if (!BattleWidgetClass)
         return;
 
-    if (UBattleWidget *W = CreateWidget<UBattleWidget>(GetWorld(), BattleWidgetClass))
+    UBattleWidget *W = CreateWidget<UBattleWidget>(GetWorld(), BattleWidgetClass);
+    if (!W)
+        return;
+    W->AddToViewport(20);
+
+    AHexPawn *PlayerPawn = GetPlayerPawnTyped();
+    UCombatComponent *PlayerCombat = PlayerPawn ? PlayerPawn->GetCombat() : nullptr;
+
+    // Choose enemy id
+    const FName EnemyId = PickRandomEnemyIdFromCatalog();
+    if (EnemyId.IsNone())
     {
-        W->AddToViewport(20);
-        BattleWidget = W;
-        APlayerController *PC = GetWorld()->GetFirstPlayerController();
-        if (PC)
+        UE_LOG(LogTemp, Warning, TEXT("EnemyCatalog empty"));
+        return;
+    }
+
+    // Spawn enemy with data BEFORE BeginPlay
+    FVector BaseLoc = PlayerPawn ? PlayerPawn->GetActorLocation() : FVector::ZeroVector;
+    FTransform X(FRotator::ZeroRotator, BaseLoc + FVector(2000, 0, 0));
+
+    UClass *SpawnClass = EnemyPawnClass ? EnemyPawnClass.Get() : AHexEnemyPawn::StaticClass();
+    AHexEnemyPawn *EnemyPawn = GetWorld()->SpawnActorDeferred<AHexEnemyPawn>(SpawnClass, X);
+    if (EnemyPawn)
+    {
+        if (TSoftObjectPtr<UEnemyDefinition> *Entry = EnemyCatalog.Find(EnemyId))
         {
-            FInputModeUIOnly Mode;
-            Mode.SetWidgetToFocus(W->TakeWidget());
-            Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-            PC->SetInputMode(Mode);
-            PC->bShowMouseCursor = true;
-            PC->SetIgnoreLookInput(true);
-            PC->SetIgnoreMoveInput(true);
+            EnemyPawn->EnemyData = *Entry;
+
+            if (UEnemyDefinition *Def = Entry->LoadSynchronous())
+            {
+                if (UTexture2D *Tex = Def->Portrait.LoadSynchronous())
+                {
+                    W->SetEnemyPortrait(Tex);
+                }
+            }
         }
-        AHexPawn *PlayerPawn = GetPlayerPawnTyped();
-        UCombatComponent *PlayerCombat = PlayerPawn ? PlayerPawn->GetCombat() : nullptr;
-
-        AHexPawn *EnemyPawn = GetWorld()->SpawnActor<AHexPawn>();
-        UCombatComponent *EnemyCombat = EnemyPawn ? EnemyPawn->GetCombat() : nullptr;
-
-        if (W && PlayerCombat && EnemyCombat)
+        else
         {
-            W->SetSides(PlayerCombat, EnemyCombat);
+            UE_LOG(LogTemp, Warning, TEXT("EnemyCatalog has no entry for id=%s"), *EnemyId.ToString());
+        }
+        UGameplayStatics::FinishSpawningActor(EnemyPawn, X);
+    }
+
+    W->SetSides(PlayerCombat, EnemyPawn ? EnemyPawn->GetCombat() : nullptr);
+}
+
+void ADemoGameMode::OpenLoadoutEditor()
+{
+    if (!LoadoutWidgetClass)
+        return;
+
+    if (ULoadoutEditorWidget *W = CreateWidget<ULoadoutEditorWidget>(GetWorld(), LoadoutWidgetClass))
+    {
+        W->AddToViewport(15);
+        W->SetAlignmentInViewport(FVector2D(0.5f, 0.5f));
+        W->SetAnchorsInViewport(FAnchors(0.5f, 0.5f, 0.5f, 0.5f));
+        W->SetPositionInViewport(FVector2D(0, 0));
+        W->SetDesiredSizeInViewport(FVector2D(700, 480));
+
+        if (AHexPawn *P = GetPlayerPawnTyped())
+        {
+            W->SetCombat(P->GetCombat());
         }
     }
+}
+
+FName ADemoGameMode::PickRandomEnemyIdFromCatalog() const
+{
+    TArray<FName> Keys;
+    EnemyCatalog.GetKeys(Keys);
+    if (Keys.Num() == 0)
+        return NAME_None;
+    const int32 idx = EnemyRNG.RandRange(0, Keys.Num() - 1);
+    UE_LOG(LogTemp, Log, TEXT("Catalog keys: %s  -> pick[%d]=%s"),
+           *FString::JoinBy(Keys, TEXT(","), [](const FName &N)
+                            { return N.ToString(); }),
+           idx, *Keys[idx].ToString());
+    return Keys[idx];
 }
 
 
@@ -1057,6 +1358,30 @@ void AHexAnimationManager::BatchUpdateAnimations()
 {
     // Implementation
 }
+
+
+================================================
+FILE: Private/HexEnemyPawn.cpp
+================================================
+#include "HexEnemyPawn.h"
+#include "EnemyDefinition.h"
+#include "CombatComponent.h"
+#include "Engine/Texture2D.h"
+
+void AHexEnemyPawn::BeginPlay()
+{
+    Super::BeginPlay();
+    if (EnemyData.IsNull() || !Combat) return;
+
+    if (UEnemyDefinition* Def = EnemyData.LoadSynchronous())
+    {
+        Combat->SetStats(Def->BaseStats);
+
+        // optional: if AHexPawn has a Portrait property, set it
+        // Portrait = Def->Portrait;
+    }
+}
+
 
 
 ================================================
@@ -1552,7 +1877,7 @@ TArray<FHexAxialCoordinates> UHexPathFinder::FindPath(const FHexAxialCoordinates
                 const int32 MaxLen = FMath::Max(1, MaxStepsPerTurn + 1); // +1 pour inclure Start
                 if (OutPath.Num() > MaxLen)
                 {
-                    OutPath.SetNum(MaxLen, /*bAllowShrinking*/ false);
+                    OutPath.SetNum(MaxLen, EAllowShrinking::No);
                 }
             }
             return OutPath;
@@ -2311,6 +2636,112 @@ void AHexTile::SetTileType(EHexTileType NewType)
 
 
 ================================================
+FILE: Private/LoadoutEditorWidget.cpp
+================================================
+#include "LoadoutEditorWidget.h"
+#include "Components/Button.h"
+#include "Components/TextBlock.h"
+#include "Blueprint/WidgetLayoutLibrary.h"
+#include "CombatComponent.h"
+#include "BattleActions.h"
+#include "ActionDragOperation.h"
+#include "ActionEntryWidget.h"
+
+ULoadoutEditorWidget::ULoadoutEditorWidget(const FObjectInitializer& O):Super(O){}
+
+void ULoadoutEditorWidget::SetCombat(UCombatComponent* InCombat)
+{
+    Combat = InCombat;
+    SelectedSlot = 0;
+
+    OriginalLoadout = Combat ? Combat->GetLoadout() : TArray<FBattleActionSlot>{};
+    EditorLoadout   = OriginalLoadout;
+    if (EditorLoadout.Num() < 5) EditorLoadout.SetNum(5);
+    RefreshSlots();
+}
+
+void ULoadoutEditorWidget::NativeConstruct()
+{
+    Super::NativeConstruct();
+
+    if (SlotBtn0) SlotBtn0->OnClicked.AddDynamic(this, &ULoadoutEditorWidget::OnSlot0);
+    if (SlotBtn1) SlotBtn1->OnClicked.AddDynamic(this, &ULoadoutEditorWidget::OnSlot1);
+    if (SlotBtn2) SlotBtn2->OnClicked.AddDynamic(this, &ULoadoutEditorWidget::OnSlot2);
+    if (SlotBtn3) SlotBtn3->OnClicked.AddDynamic(this, &ULoadoutEditorWidget::OnSlot3);
+    if (SlotBtn4) SlotBtn4->OnClicked.AddDynamic(this, &ULoadoutEditorWidget::OnSlot4);
+
+    if (BtnSave)   BtnSave  ->OnClicked.AddDynamic(this, &ULoadoutEditorWidget::OnSave);
+    if (BtnCancel) BtnCancel->OnClicked.AddDynamic(this, &ULoadoutEditorWidget::OnCancel);
+
+    RefreshSlots();
+}
+
+void ULoadoutEditorWidget::RefreshSlots()
+{
+    auto SetOne = [](UTextBlock* T, const FBattleActionSlot& S)
+    {
+        if (T) T->SetText(UBattleActionLibrary::ActionToText(S.Action));
+    };
+    SetOne(SlotText0, EditorLoadout.IsValidIndex(0)?EditorLoadout[0]:FBattleActionSlot{});
+    SetOne(SlotText1, EditorLoadout.IsValidIndex(1)?EditorLoadout[1]:FBattleActionSlot{});
+    SetOne(SlotText2, EditorLoadout.IsValidIndex(2)?EditorLoadout[2]:FBattleActionSlot{});
+    SetOne(SlotText3, EditorLoadout.IsValidIndex(3)?EditorLoadout[3]:FBattleActionSlot{});
+    SetOne(SlotText4, EditorLoadout.IsValidIndex(4)?EditorLoadout[4]:FBattleActionSlot{});
+}
+
+int32 ULoadoutEditorWidget::HitTestSlotIndex(const FVector2D& ScreenPos) const
+{
+    const auto Under = [&](const UWidget* W)->bool{
+        return W && W->GetCachedGeometry().IsUnderLocation(ScreenPos);
+    };
+    if (Under(SlotBtn0)) return 0;
+    if (Under(SlotBtn1)) return 1;
+    if (Under(SlotBtn2)) return 2;
+    if (Under(SlotBtn3)) return 3;
+    if (Under(SlotBtn4)) return 4;
+    return INDEX_NONE;
+}
+
+bool ULoadoutEditorWidget::NativeOnDrop(const FGeometry& Geo, const FDragDropEvent& Ev, UDragDropOperation* Op)
+{
+    const FVector2D Screen = Ev.GetScreenSpacePosition();
+    const int32 Index = HitTestSlotIndex(Screen);
+    if (Index == INDEX_NONE) return false;
+
+    if (UActionDragOperation* A = Cast<UActionDragOperation>(Op))
+    {
+        if (!EditorLoadout.IsValidIndex(Index)) return false;
+        EditorLoadout[Index].Action = A->Action;
+        EditorLoadout[Index].SlotCost = 1;
+        SelectedSlot = Index;
+        RefreshSlots();
+        return true;
+    }
+    return false;
+}
+
+// slot selection
+void ULoadoutEditorWidget::OnSlot0(){ SelectedSlot=0; }
+void ULoadoutEditorWidget::OnSlot1(){ SelectedSlot=1; }
+void ULoadoutEditorWidget::OnSlot2(){ SelectedSlot=2; }
+void ULoadoutEditorWidget::OnSlot3(){ SelectedSlot=3; }
+void ULoadoutEditorWidget::OnSlot4(){ SelectedSlot=4; }
+
+void ULoadoutEditorWidget::OnSave()
+{
+    if (Combat) Combat->SetLoadout(EditorLoadout);
+    RemoveFromParent();
+}
+
+void ULoadoutEditorWidget::OnCancel()
+{
+    // discard working copy; just close
+    RemoveFromParent();
+}
+
+
+
+================================================
 FILE: Private/PathView.cpp
 ================================================
 #include "PathView.h"
@@ -2431,6 +2862,72 @@ void UPlayerStatsWidget::RefreshTexts()
 
 
 ================================================
+FILE: Public/ActionDragOperation.h
+================================================
+#pragma once
+#include "Blueprint/DragDropOperation.h"
+#include "BattleActions.h"
+#include "ActionDragOperation.generated.h"
+
+UCLASS()
+class DEMO_API UActionDragOperation : public UDragDropOperation
+{
+    GENERATED_BODY()
+public:
+    UPROPERTY(BlueprintReadWrite)
+    EBattleAction Action = EBattleAction::None;
+};
+
+
+
+================================================
+FILE: Public/ActionEntryWidget.h
+================================================
+#pragma once
+#include "CoreMinimal.h"
+#include "Blueprint/UserWidget.h"
+#include "BattleActions.h"
+#include "ActionEntryWidget.generated.h"
+
+class UTextBlock;
+
+UCLASS()
+class DEMO_API UActionEntryWidget : public UUserWidget
+{
+	GENERATED_BODY()
+public:
+	UActionEntryWidget(const FObjectInitializer &);
+
+	UFUNCTION(BlueprintCallable, Category = "Battle")
+	void SetAction(EBattleAction In)
+	{
+		Action = In;
+		RefreshLabel();
+	}
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle")
+	EBattleAction DefaultAction = EBattleAction::None; // set in BP if desired
+
+protected:
+	virtual void NativeConstruct() override;
+	virtual FReply NativeOnPreviewMouseButtonDown(const FGeometry &, const FPointerEvent &) override;
+	virtual void NativeOnDragDetected(const FGeometry &Geo, const FPointerEvent &MouseEvent, UDragDropOperation *&OutOp) override;
+
+private:
+	void RefreshLabel();
+
+private:
+	UPROPERTY()
+	EBattleAction Action = EBattleAction::None;
+
+public: // BindWidget
+	UPROPERTY(meta = (BindWidget))
+	UTextBlock *Label = nullptr;
+};
+
+
+
+================================================
 FILE: Public/BattleActions.h
 ================================================
 #pragma once
@@ -2483,23 +2980,37 @@ FILE: Public/BattleWidget.h
 #pragma once
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "BattleActions.h"
 #include "BattleWidget.generated.h"
 
 class UImage;
 class UProgressBar;
 class UTextBlock;
+class UButton;
 class UCombatComponent;
-
+class UTexture2D;
 UCLASS()
 class DEMO_API UBattleWidget : public UUserWidget
 {
     GENERATED_BODY()
 
 public:
-    UBattleWidget(const FObjectInitializer&);
+    UBattleWidget(const FObjectInitializer &);
 
-    UFUNCTION(BlueprintCallable, Category="Battle")
-    void SetSides(UCombatComponent* InPlayer, UCombatComponent* InEnemy);
+    UFUNCTION(BlueprintCallable, Category = "Battle")
+    void SetSides(UCombatComponent *InPlayer, UCombatComponent *InEnemy);
+
+    UFUNCTION(BlueprintCallable, Category = "Battle")
+    void SetEnemyPortrait(UTexture2D *Tex);
+
+    UFUNCTION(BlueprintCallable, Category = "Battle")
+    void SetPlayerPortrait(UTexture2D *Tex); // optional symmetry
+
+    UFUNCTION(BlueprintCallable, Category = "Battle")
+    void StartAutoBattle();
+
+    UFUNCTION(BlueprintCallable, Category = "Battle")
+    void StopAutoBattle();
 
 protected:
     virtual void NativeConstruct() override;
@@ -2507,32 +3018,67 @@ protected:
 
 private:
     void Refresh();
+    void UpdateHighlights();                        // <-- new
+    UTextBlock *PlayerActTextAt(int32 Index) const; // <-- new
+    UTextBlock *EnemyActTextAt(int32 Index) const;  // <-- new
+    void StepAction();
+    void DoAction(UCombatComponent *Source, UCombatComponent *Target, const FBattleActionSlot &ActionSlot);
+    UFUNCTION()
+    void OnQuitClicked(); // <-- new
+
+private:
     FTimerHandle RefreshTimer;
+    FTimerHandle ActionTimer;
 
-private: // data
-    UPROPERTY() UCombatComponent* PlayerCombat = nullptr;
-    UPROPERTY() UCombatComponent* EnemyCombat  = nullptr;
+    UPROPERTY()
+    UCombatComponent *PlayerCombat = nullptr;
+    UPROPERTY()
+    UCombatComponent *EnemyCombat = nullptr;
 
-public: // BindWidget: create these in BP
+    int32 CurrentIndex = 0;
+    bool bBattleRunning = false;
+    bool bPlayerTurn = true; // one action per tick
+
+public: // BindWidget
     // Player
-    UPROPERTY(meta=(BindWidget)) UImage*       PlayerPortrait = nullptr;
-    UPROPERTY(meta=(BindWidget)) UProgressBar* PlayerHPBar    = nullptr;
-    UPROPERTY(meta=(BindWidget)) UTextBlock*   PlayerHPText   = nullptr;
-    UPROPERTY(meta=(BindWidget)) UTextBlock*   PlayerAct0 = nullptr;
-    UPROPERTY(meta=(BindWidget)) UTextBlock*   PlayerAct1 = nullptr;
-    UPROPERTY(meta=(BindWidget)) UTextBlock*   PlayerAct2 = nullptr;
-    UPROPERTY(meta=(BindWidget)) UTextBlock*   PlayerAct3 = nullptr;
-    UPROPERTY(meta=(BindWidget)) UTextBlock*   PlayerAct4 = nullptr;
+    UPROPERTY(meta = (BindWidget))
+    UImage *PlayerPortrait = nullptr;
+    UPROPERTY(meta = (BindWidget))
+    UProgressBar *PlayerHPBar = nullptr;
+    UPROPERTY(meta = (BindWidget))
+    UTextBlock *PlayerHPText = nullptr;
+    UPROPERTY(meta = (BindWidget))
+    UTextBlock *PlayerAct0 = nullptr;
+    UPROPERTY(meta = (BindWidget))
+    UTextBlock *PlayerAct1 = nullptr;
+    UPROPERTY(meta = (BindWidget))
+    UTextBlock *PlayerAct2 = nullptr;
+    UPROPERTY(meta = (BindWidget))
+    UTextBlock *PlayerAct3 = nullptr;
+    UPROPERTY(meta = (BindWidget))
+    UTextBlock *PlayerAct4 = nullptr;
 
     // Enemy
-    UPROPERTY(meta=(BindWidget)) UImage*       EnemyPortrait = nullptr;
-    UPROPERTY(meta=(BindWidget)) UProgressBar* EnemyHPBar    = nullptr;
-    UPROPERTY(meta=(BindWidget)) UTextBlock*   EnemyHPText   = nullptr;
-    UPROPERTY(meta=(BindWidget)) UTextBlock*   EnemyAct0 = nullptr;
-    UPROPERTY(meta=(BindWidget)) UTextBlock*   EnemyAct1 = nullptr;
-    UPROPERTY(meta=(BindWidget)) UTextBlock*   EnemyAct2 = nullptr;
-    UPROPERTY(meta=(BindWidget)) UTextBlock*   EnemyAct3 = nullptr;
-    UPROPERTY(meta=(BindWidget)) UTextBlock*   EnemyAct4 = nullptr;
+    UPROPERTY(meta = (BindWidget))
+    UImage *EnemyPortrait = nullptr;
+    UPROPERTY(meta = (BindWidget))
+    UProgressBar *EnemyHPBar = nullptr;
+    UPROPERTY(meta = (BindWidget))
+    UTextBlock *EnemyHPText = nullptr;
+    UPROPERTY(meta = (BindWidget))
+    UTextBlock *EnemyAct0 = nullptr;
+    UPROPERTY(meta = (BindWidget))
+    UTextBlock *EnemyAct1 = nullptr;
+    UPROPERTY(meta = (BindWidget))
+    UTextBlock *EnemyAct2 = nullptr;
+    UPROPERTY(meta = (BindWidget))
+    UTextBlock *EnemyAct3 = nullptr;
+    UPROPERTY(meta = (BindWidget))
+    UTextBlock *EnemyAct4 = nullptr;
+
+    // Quit button
+    UPROPERTY(meta = (BindWidget))
+    UButton *BtnQuit = nullptr; // add a Button named BtnQuit in the BP
 };
 
 
@@ -2592,7 +3138,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Battle") int32 GetMaxSlots() const { return MaxSlots; }
     UFUNCTION(BlueprintPure, Category="Battle") const TArray<FBattleActionSlot>& GetLoadout() const { return Loadout; }
-    UFUNCTION(BlueprintCallable, Category="Battle") void SetLoadout(const TArray<FBattleActionSlot>& In);
+    UFUNCTION(BlueprintCallable, Category="Battle") void SetSlotAction(int32 Index, EBattleAction Action, int32 Cost = 1);
+	UFUNCTION(BlueprintCallable, Category="Battle") void SetLoadout(const TArray<FBattleActionSlot>& In);
+    UFUNCTION(BlueprintCallable, Category="Combat") void SetStats(const FCombatStats& In) { Stats = In; Stats.HP = FMath::Clamp(Stats.HP, 0, Stats.MaxHP); }
 
 protected:
     virtual void BeginPlay() override;  // <-- add this
@@ -2621,7 +3169,7 @@ FILE: Public/DemoGameMode.h
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
 #include "HexCoordinates.h"
-#include "Blueprint/UserWidget.h"   // add (or: forward declare class UUserWidget;)
+#include "Blueprint/UserWidget.h" // add (or: forward declare class UUserWidget;)
 #include "DemoGameMode.generated.h"
 
 // Forward declarations
@@ -2633,8 +3181,10 @@ class APathView;
 class AHexPawn;
 class AHexAnimationManager;
 class UPlayerStatsWidget;
-class UBattleWidget;      
-
+class UBattleWidget;
+class ULoadoutEditorWidget;
+class UEnemyDefinition;
+class AHexEnemyPawn;
 /**
  * Central GameMode: owns GridManager and PathFinder, drives click-to-move and path preview.
  */
@@ -2647,98 +3197,111 @@ public:
     ADemoGameMode();
 
     /** Click handler entry point from tiles */
-    UFUNCTION(BlueprintCallable, Category="Hex|Input")
-    void HandleTileClicked(AHexTile* ClickedTile);
+    UFUNCTION(BlueprintCallable, Category = "Hex|Input")
+    void HandleTileClicked(AHexTile *ClickedTile);
 
     /** Accessors for managers */
-    UFUNCTION(BlueprintPure, Category="Hex")
-    UHexGridManager* GetHexGridManager() const { return GridManager; }
+    UFUNCTION(BlueprintPure, Category = "Hex")
+    UHexGridManager *GetHexGridManager() const { return GridManager; }
 
-    UFUNCTION(BlueprintPure, Category="Hex")
-    UHexPathFinder* GetHexPathFinder() const { return PathFinder; }
+    UFUNCTION(BlueprintPure, Category = "Hex")
+    UHexPathFinder *GetHexPathFinder() const { return PathFinder; }
 
     /** Planned-path rendering */
-    UFUNCTION(BlueprintCallable, Category="Hex|Path")
-    void ShowPlannedPathTo(AHexTile* GoalTile);
+    UFUNCTION(BlueprintCallable, Category = "Hex|Path")
+    void ShowPlannedPathTo(AHexTile *GoalTile);
 
-    UFUNCTION(BlueprintCallable, Category="Hex|Path")
+    UFUNCTION(BlueprintCallable, Category = "Hex|Path")
     void ClearPlannedPath();
 
     /** Hover preview controls */
-    void PreviewPathTo(AHexTile* GoalTile);
+    void PreviewPathTo(AHexTile *GoalTile);
     void ClearPreview();
 
-    UFUNCTION(BlueprintCallable, Category="Hex|PathPreview")
+    UFUNCTION(BlueprintCallable, Category = "Hex|PathPreview")
     void SetPreviewEnabled(bool bEnabled);
 
-    UFUNCTION(BlueprintCallable, Category="Hex|PathPreview")
+    UFUNCTION(BlueprintCallable, Category = "Hex|PathPreview")
     void TogglePreview();
 
-    UFUNCTION(BlueprintPure, Category="Hex|PathPreview")
+    UFUNCTION(BlueprintPure, Category = "Hex|PathPreview")
     bool IsPreviewEnabled() const { return bPreviewEnabled; }
 
     /** Open shop UI at a given tile */
-    UFUNCTION(BlueprintCallable, Category="Hex|Gameplay")
-    void OpenShopAt(AHexTile* ShopTile);
+    UFUNCTION(BlueprintCallable, Category = "Hex|Gameplay")
+    void OpenShopAt(AHexTile *ShopTile);
 
     /** Initial axial coordinates for the player pawn */
-    UPROPERTY(EditAnywhere, Category="Hex|Start")
+    UPROPERTY(EditAnywhere, Category = "Hex|Start")
     FHexAxialCoordinates StartCoords = FHexAxialCoordinates(0, 6);
 
-    UFUNCTION(BlueprintCallable, Category="Hex|Visibility")
+    UFUNCTION(BlueprintCallable, Category = "Hex|Visibility")
     void UpdateReachableVisibility(int32 MaxSteps);
 
-    UPROPERTY(EditAnywhere, Category="UI")
+    UPROPERTY(EditAnywhere, Category = "UI")
     TSubclassOf<UUserWidget> PlayerStatsWidgetClass;
 
-    UFUNCTION(BlueprintCallable, Category="Battle")
+    UFUNCTION(BlueprintCallable, Category = "Battle")
     void StartTestBattle();
 
-    UPROPERTY(EditAnywhere, Category="UI")
+    UPROPERTY(EditAnywhere, Category = "UI")
     TSubclassOf<UUserWidget> BattleWidgetClass;
 
+    UPROPERTY(EditAnywhere, Category = "UI")
+    TSubclassOf<UUserWidget> LoadoutWidgetClass;
+
+    UPROPERTY(EditAnywhere, Category = "Battle")
+    TMap<FName, TSoftObjectPtr<UEnemyDefinition>> EnemyCatalog;
+
+    UPROPERTY(EditAnywhere, Category = "Battle")
+    TSubclassOf<AHexEnemyPawn> EnemyPawnClass;
+
+    UFUNCTION(BlueprintCallable, Category = "Battle")
+    void OpenLoadoutEditor();
+
+        
 protected:
     /** Engine lifecycle */
     virtual void BeginPlay() override;
     virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
     /** Post-login hooks to finish initial snapping */
-    virtual void PostLogin(APlayerController* NewPlayer) override;
-    virtual void Logout(AController* Exiting) override;
+    virtual void PostLogin(APlayerController *NewPlayer) override;
+    virtual void Logout(AController *Exiting) override;
 
     /** Position the pawn on the starting tile */
-    void InitializePawnStartTile(const FHexAxialCoordinates& InStartCoords);
+    void InitializePawnStartTile(const FHexAxialCoordinates &InStartCoords);
 
     /** Tile class used to spawn the grid */
-    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Hex|Grid", meta=(AllowAbstract="false"))
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hex|Grid", meta = (AllowAbstract = "false"))
     TSubclassOf<AHexTile> HexTileClass = nullptr;
 
     /** Grid generation parameters */
-    UPROPERTY(EditDefaultsOnly, Category="Hex")
+    UPROPERTY(EditDefaultsOnly, Category = "Hex")
     int32 GridRadius = 10;
 
     /** Core managers (created/owned by GM) */
-    UPROPERTY(VisibleAnywhere, Category="Hex")
-    UHexGridManager* GridManager = nullptr;
+    UPROPERTY(VisibleAnywhere, Category = "Hex")
+    UHexGridManager *GridManager = nullptr;
 
-    UPROPERTY(VisibleAnywhere, Category="Hex")
-    UHexPathFinder* PathFinder = nullptr;
+    UPROPERTY(VisibleAnywhere, Category = "Hex")
+    UHexPathFinder *PathFinder = nullptr;
 
     /** Path debug actor */
     UPROPERTY()
-    APathView* PathView = nullptr;
+    APathView *PathView = nullptr;
 
     /** Optional: UI class for shop */
-    UPROPERTY(EditDefaultsOnly, Category="UI")
+    UPROPERTY(EditDefaultsOnly, Category = "UI")
     TSubclassOf<UUserWidget> ShopWidgetClass;
 
     /** Optional PC override through BP */
-    UPROPERTY(EditDefaultsOnly, Category="Player")
+    UPROPERTY(EditDefaultsOnly, Category = "Player")
     TSoftClassPtr<APlayerController> PCClassSoft;
 
     /** Optional animation manager */
     UPROPERTY()
-    AHexAnimationManager* AnimationManager = nullptr;
+    AHexAnimationManager *AnimationManager = nullptr;
 
 private:
     /** Preview throttle */
@@ -2757,10 +3320,10 @@ private:
     void DoPreviewTick();
 
     /** Typed pawn getter */
-    AHexPawn* GetPlayerPawnTyped() const;
+    AHexPawn *GetPlayerPawnTyped() const;
 
     /** Preview toggle */
-    UPROPERTY(EditAnywhere, Category="Hex|PathPreview")
+    UPROPERTY(EditAnywhere, Category = "Hex|PathPreview")
     bool bPreviewEnabled = true;
 
     /** Post-login pawn snap retry */
@@ -2772,6 +3335,40 @@ private:
 
     TWeakObjectPtr<UUserWidget> PlayerStatsWidget;
     TWeakObjectPtr<UBattleWidget> BattleWidget;
+
+    FRandomStream EnemyRNG;
+    FName PickRandomEnemyIdFromCatalog() const;
+};
+
+
+
+================================================
+FILE: Public/EnemyDefinition.h
+================================================
+#pragma once
+#include "CoreMinimal.h"
+#include "Engine/DataAsset.h"            // <- change include
+#include "CombatComponent.h"
+#include "EnemyDefinition.generated.h"
+
+class UTexture2D;
+
+UCLASS(BlueprintType)
+class DEMO_API UEnemyDefinition : public UDataAsset
+{
+    GENERATED_BODY()
+public:
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Enemy")
+    FName EnemyId;                                    // unique id
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Enemy")
+    FText DisplayName;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Enemy")
+    TSoftObjectPtr<UTexture2D> Portrait;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Enemy")
+    FCombatStats BaseStats;
 };
 
 
@@ -2985,6 +3582,30 @@ FORCEINLINE uint32 GetTypeHash(const FHexAxialCoordinates& Coords)
 {
     return HashCombine(::GetTypeHash(Coords.Q), ::GetTypeHash(Coords.R));
 }
+
+
+
+================================================
+FILE: Public/HexEnemyPawn.h
+================================================
+#pragma once
+#include "CoreMinimal.h"
+#include "HexPawn.h"
+#include "HexEnemyPawn.generated.h"
+
+class UEnemyDefinition;
+
+UCLASS()
+class DEMO_API AHexEnemyPawn : public AHexPawn
+{
+    GENERATED_BODY()
+public:
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Enemy")
+    TSoftObjectPtr<UEnemyDefinition> EnemyData;
+
+protected:
+    virtual void BeginPlay() override;
+};
 
 
 
@@ -3377,6 +3998,66 @@ private:
 
     /** Updates material parameters based on highlight state */
     void UpdateMaterialColor();
+};
+
+
+
+================================================
+FILE: Public/LoadoutEditorWidget.h
+================================================
+#pragma once
+#include "CoreMinimal.h"
+#include "Blueprint/UserWidget.h"
+#include "BattleActions.h"
+#include "LoadoutEditorWidget.generated.h"
+
+class UButton;
+class UTextBlock;
+class UCombatComponent;
+
+UCLASS()
+class DEMO_API ULoadoutEditorWidget : public UUserWidget
+{
+    GENERATED_BODY()
+
+public:
+    ULoadoutEditorWidget(const FObjectInitializer&);
+    UFUNCTION(BlueprintCallable, Category="Battle") void SetCombat(UCombatComponent* InCombat);
+
+protected:
+    virtual void NativeConstruct() override;
+    virtual bool NativeOnDrop(const FGeometry& Geo, const FDragDropEvent& DragDropEvent, UDragDropOperation* Op) override;
+
+private:
+    void RefreshSlots();
+    int32 HitTestSlotIndex(const FVector2D& ScreenPos) const; // which slot rect under cursor
+
+    // slot clicks still supported
+    UFUNCTION() void OnSlot0(); UFUNCTION() void OnSlot1(); UFUNCTION() void OnSlot2(); UFUNCTION() void OnSlot3(); UFUNCTION() void OnSlot4();
+    UFUNCTION() void OnSave();  UFUNCTION() void OnCancel();
+
+private:
+    UPROPERTY() UCombatComponent* Combat = nullptr;
+    int32 SelectedSlot = 0;
+
+    // working copy so Cancel can revert
+    TArray<FBattleActionSlot> OriginalLoadout;
+    TArray<FBattleActionSlot> EditorLoadout;
+
+public: // BindWidget â€” left column
+    UPROPERTY(meta=(BindWidget)) UButton*    SlotBtn0 = nullptr; UPROPERTY(meta=(BindWidget)) UTextBlock* SlotText0 = nullptr;
+    UPROPERTY(meta=(BindWidget)) UButton*    SlotBtn1 = nullptr; UPROPERTY(meta=(BindWidget)) UTextBlock* SlotText1 = nullptr;
+    UPROPERTY(meta=(BindWidget)) UButton*    SlotBtn2 = nullptr; UPROPERTY(meta=(BindWidget)) UTextBlock* SlotText2 = nullptr;
+    UPROPERTY(meta=(BindWidget)) UButton*    SlotBtn3 = nullptr; UPROPERTY(meta=(BindWidget)) UTextBlock* SlotText3 = nullptr;
+    UPROPERTY(meta=(BindWidget)) UButton*    SlotBtn4 = nullptr; UPROPERTY(meta=(BindWidget)) UTextBlock* SlotText4 = nullptr;
+
+public: // BindWidget â€” right panel actions (replace your old buttons with ActionEntryWidget instances)
+    UPROPERTY(meta=(BindWidget)) class UActionEntryWidget* ActAttack = nullptr;
+    UPROPERTY(meta=(BindWidget)) class UActionEntryWidget* ActHeal   = nullptr;
+
+public: // BindWidget â€” footer
+    UPROPERTY(meta=(BindWidget)) UButton* BtnSave = nullptr;
+    UPROPERTY(meta=(BindWidget)) UButton* BtnCancel = nullptr;
 };
 
 
