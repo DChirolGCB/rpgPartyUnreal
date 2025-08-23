@@ -5,6 +5,7 @@
 #include "GameFramework/Pawn.h"
 #include "HexCoordinates.h"
 #include "HexAnimationTypes.h"
+#include "CombatComponent.h" 
 #include "HexPawn.generated.h"
 
 // Forward declarations
@@ -13,6 +14,7 @@ class UCameraComponent;
 class UHexSpriteComponent;
 class AHexTile;
 class UHexGridManager;
+class UCombatComponent;
 
 /**
  * Pawn that moves tile-to-tile on a hex grid and displays a Paper2D flipbook.
@@ -91,6 +93,12 @@ public:
     /** Paper2D sprite component wrapper */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Hex|Visual")
     UHexSpriteComponent* SpriteComp = nullptr;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Combat")
+    UCombatComponent* Combat = nullptr;
+
+    UFUNCTION(BlueprintPure, Category="Combat")
+    UCombatComponent* GetCombat() const { return Combat; }
 
 protected:
     /** Local/remote hooks (no-op for now) */

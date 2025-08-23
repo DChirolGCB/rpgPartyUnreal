@@ -8,12 +8,15 @@
 #include "TimerManager.h"
 #include "UObject/ConstructorHelpers.h"
 
-#include "HexPawn.h"
+#include "BattleWidget.h"
 #include "HexAnimationManager.h"
 #include "HexGridManager.h"
 #include "HexPathFinder.h"
+#include "HexPawn.h"
 #include "HexTile.h"
 #include "PathView.h"
+#include "PlayerStatsWidget.h"
+#include "LoadoutEditorWidget.h"
 
 namespace
 {
@@ -239,6 +242,10 @@ void ADemoGameMode::BeginPlay()
 {
     Super::BeginPlay();
 
+    if (APlayerController *PC = GetWorld()->GetFirstPlayerController())
+    {
+        PC->InputComponent->BindAction("TestBattle", IE_Pressed, this, &ADemoGameMode::StartTestBattle);
+    }
     if (!GridManager || !GridManager->IsRegistered())
     {
         GridManager = NewObject<UHexGridManager>(this, TEXT("HexGridManager_RT"));
@@ -250,6 +257,24 @@ void ADemoGameMode::BeginPlay()
         PathFinder = NewObject<UHexPathFinder>(this, TEXT("HexPathFinder_RT"));
         AddInstanceComponent(PathFinder);
         PathFinder->RegisterComponent();
+    }
+    if (PlayerStatsWidgetClass)
+    {
+        if (UUserWidget *W = CreateWidget<UUserWidget>(GetWorld(), PlayerStatsWidgetClass))
+        {
+            W->AddToViewport(/*ZOrder*/ 0);
+            PlayerStatsWidget = W;
+
+            // wire data source
+            if (AHexPawn *P = GetPlayerPawnTyped())
+            {
+                // If widget is our C++ type, push the Combat component
+                if (UPlayerStatsWidget *PSW = Cast<UPlayerStatsWidget>(W))
+                {
+                    PSW->SetCombat(P->GetCombat());
+                }
+            }
+        }
     }
 
     UWorld *W = GetWorld();
@@ -707,6 +732,58 @@ void ADemoGameMode::UpdateReachableVisibility(int32 MaxSteps)
                 T->SetActorHiddenInGame(!bReachable);
                 T->SetActorEnableCollision(bReachable);
             }
+        }
+    }
+}
+
+void ADemoGameMode::StartTestBattle()
+{
+    if (!BattleWidgetClass)
+        return;
+
+    if (UBattleWidget *W = CreateWidget<UBattleWidget>(GetWorld(), BattleWidgetClass))
+    {
+        W->AddToViewport(20);
+        BattleWidget = W;
+        APlayerController *PC = GetWorld()->GetFirstPlayerController();
+        if (PC)
+        {
+            FInputModeUIOnly Mode;
+            Mode.SetWidgetToFocus(W->TakeWidget());
+            Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+            PC->SetInputMode(Mode);
+            PC->bShowMouseCursor = true;
+            PC->SetIgnoreLookInput(true);
+            PC->SetIgnoreMoveInput(true);
+        }
+        AHexPawn *PlayerPawn = GetPlayerPawnTyped();
+        UCombatComponent *PlayerCombat = PlayerPawn ? PlayerPawn->GetCombat() : nullptr;
+
+        AHexPawn *EnemyPawn = GetWorld()->SpawnActor<AHexPawn>();
+        UCombatComponent *EnemyCombat = EnemyPawn ? EnemyPawn->GetCombat() : nullptr;
+
+        if (W && PlayerCombat && EnemyCombat)
+        {
+            W->SetSides(PlayerCombat, EnemyCombat);
+        }
+    }
+}
+
+void ADemoGameMode::OpenLoadoutEditor()
+{
+    if (!LoadoutWidgetClass) return;
+
+    if (ULoadoutEditorWidget* W = CreateWidget<ULoadoutEditorWidget>(GetWorld(), LoadoutWidgetClass))
+    {
+        W->AddToViewport(15);
+        W->SetAlignmentInViewport(FVector2D(0.5f, 0.5f));
+        W->SetAnchorsInViewport(FAnchors(0.5f, 0.5f, 0.5f, 0.5f));
+        W->SetPositionInViewport(FVector2D(0,0));
+        W->SetDesiredSizeInViewport(FVector2D(700, 480));
+
+        if (AHexPawn* P = GetPlayerPawnTyped())
+        {
+            W->SetCombat(P->GetCombat());
         }
     }
 }

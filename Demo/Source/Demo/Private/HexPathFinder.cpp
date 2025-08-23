@@ -93,7 +93,7 @@ TArray<FHexAxialCoordinates> UHexPathFinder::FindPath(const FHexAxialCoordinates
                 const int32 MaxLen = FMath::Max(1, MaxStepsPerTurn + 1); // +1 pour inclure Start
                 if (OutPath.Num() > MaxLen)
                 {
-                    OutPath.SetNum(MaxLen, /*bAllowShrinking*/ false);
+                    OutPath.SetNum(MaxLen, EAllowShrinking::No);
                 }
             }
             return OutPath;

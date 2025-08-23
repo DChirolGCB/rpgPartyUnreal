@@ -4,6 +4,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
 #include "HexCoordinates.h"
+#include "Blueprint/UserWidget.h"   // add (or: forward declare class UUserWidget;)
 #include "DemoGameMode.generated.h"
 
 // Forward declarations
@@ -14,6 +15,9 @@ class UHexPathFinder;
 class APathView;
 class AHexPawn;
 class AHexAnimationManager;
+class UPlayerStatsWidget;
+class UBattleWidget;      
+class ULoadoutEditorWidget;
 
 /**
  * Central GameMode: owns GridManager and PathFinder, drives click-to-move and path preview.
@@ -67,6 +71,22 @@ public:
 
     UFUNCTION(BlueprintCallable, Category="Hex|Visibility")
     void UpdateReachableVisibility(int32 MaxSteps);
+
+    UPROPERTY(EditAnywhere, Category="UI")
+    TSubclassOf<UUserWidget> PlayerStatsWidgetClass;
+
+    UFUNCTION(BlueprintCallable, Category="Battle")
+    void StartTestBattle();
+
+    UPROPERTY(EditAnywhere, Category="UI")
+    TSubclassOf<UUserWidget> BattleWidgetClass;
+
+    UPROPERTY(EditAnywhere, Category="UI")
+    TSubclassOf<UUserWidget> LoadoutWidgetClass;
+
+    
+UFUNCTION(BlueprintCallable, Category="Battle")
+void OpenLoadoutEditor();
 
 protected:
     /** Engine lifecycle */
@@ -140,4 +160,7 @@ private:
     /** Try to snap pawn and camera to the start tile */
     UFUNCTION()
     void TrySnapPawnOnce();
+
+    TWeakObjectPtr<UUserWidget> PlayerStatsWidget;
+    TWeakObjectPtr<UBattleWidget> BattleWidget;
 };

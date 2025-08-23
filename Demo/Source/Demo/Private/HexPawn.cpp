@@ -13,10 +13,12 @@
 #include "HexGridManager.h"
 #include "HexSpriteComponent.h"
 #include "HexTile.h"
+#include "CombatComponent.h"
 #include "DemoGameMode.h"
 
 AHexPawn::AHexPawn()
 {
+    
     PrimaryActorTick.bCanEverTick = true;
     bReplicates = true;
     SetNetUpdateFrequency(60.f);
@@ -57,6 +59,8 @@ AHexPawn::AHexPawn()
     SpriteComp = CreateDefaultSubobject<UHexSpriteComponent>(TEXT("SpriteComp"));
     SpriteComp->SetupAttachment(RootComponent);
     SpriteComp->bEditableWhenInherited = true;
+
+    Combat = CreateDefaultSubobject<UCombatComponent>(TEXT("Combat"));
 }
 
 void AHexPawn::BeginPlay()
