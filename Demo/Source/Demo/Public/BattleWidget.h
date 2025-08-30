@@ -10,6 +10,8 @@ class UTextBlock;
 class UButton;
 class UCombatComponent;
 class UTexture2D;
+class UCanvasPanel;
+class UFloatingTextWidget;
 UCLASS()
 class DEMO_API UBattleWidget : public UUserWidget
 {
@@ -33,8 +35,11 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Battle")
     void StopAutoBattle();
 
-    UFUNCTION(BlueprintCallable, Category="Battle")
+    UFUNCTION(BlueprintCallable, Category = "Battle")
     void SetVictoryXP(int32 InXP) { VictoryXP = FMath::Max(0, InXP); }
+
+    
+
 protected:
     virtual void NativeConstruct() override;
     virtual void NativeDestruct() override;
@@ -48,6 +53,8 @@ private:
     void DoAction(UCombatComponent *Source, UCombatComponent *Target, const FBattleActionSlot &ActionSlot);
     UFUNCTION()
     void OnQuitClicked(); // <-- new
+    void SpawnFloat(bool bOnEnemy, const FText &T, const FLinearColor &Color);
+    void PlayHitWiggle(bool bOnEnemy);
 
 private:
     FTimerHandle RefreshTimer;
@@ -64,8 +71,9 @@ private:
 
     void GrantVictoryXP();
     int32 VictoryXP = 0;
-    bool  bXPGranted = false;
+    bool bXPGranted = false;
 
+    void UpdateDeathMasks();
 public: // BindWidget
     // Player
     UPROPERTY(meta = (BindWidget))
@@ -106,4 +114,20 @@ public: // BindWidget
     // Quit button
     UPROPERTY(meta = (BindWidget))
     UButton *BtnQuit = nullptr; // add a Button named BtnQuit in the BP
+
+    
+
+    // FX layers
+    UPROPERTY(EditAnywhere, Category = "Battle|FX")
+    TSubclassOf<UFloatingTextWidget> FloatingTextClass;
+    UPROPERTY(meta = (BindWidget))
+    UCanvasPanel *PlayerFXLayer = nullptr;
+    UPROPERTY(meta = (BindWidget))
+    UCanvasPanel *EnemyFXLayer = nullptr;
+    UPROPERTY(Transient, meta = (BindWidgetAnimOptional))
+    class UWidgetAnimation *PlayerHit = nullptr;
+    UPROPERTY(Transient, meta = (BindWidgetAnimOptional))
+    class UWidgetAnimation *EnemyHit = nullptr;
+    UPROPERTY(meta=(BindWidget)) class UImage* PlayerDeathMask = nullptr;
+    UPROPERTY(meta=(BindWidget)) class UImage* EnemyDeathMask  = nullptr;
 };

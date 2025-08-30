@@ -7,6 +7,10 @@
 #include "BattleActions.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
+#include "FloatingTextWidget.h"
+#include "Components/CanvasPanel.h"
+#include "Components/CanvasPanelSlot.h"
+
 
 namespace
 {
@@ -101,18 +105,20 @@ void UBattleWidget::Refresh()
 {
     if (PlayerCombat)
     {
-        const FCombatStats &S = PlayerCombat->GetStats();
+        const FCombatStats& S = PlayerCombat->GetStats();
         SetHP(PlayerHPBar, PlayerHPText, S.HP, S.MaxHP);
         SetActs(PlayerCombat->GetLoadout(), PlayerAct0, PlayerAct1, PlayerAct2, PlayerAct3, PlayerAct4);
     }
     if (EnemyCombat)
     {
-        const FCombatStats &S = EnemyCombat->GetStats();
+        const FCombatStats& S = EnemyCombat->GetStats();
         SetHP(EnemyHPBar, EnemyHPText, S.HP, S.MaxHP);
         SetActs(EnemyCombat->GetLoadout(), EnemyAct0, EnemyAct1, EnemyAct2, EnemyAct3, EnemyAct4);
     }
     UpdateHighlights();
+    UpdateDeathMasks();
 }
+
 static void ResetColor(UTextBlock *T)
 {
     if (T)
@@ -196,16 +202,33 @@ void UBattleWidget::DoAction(UCombatComponent *Source, UCombatComponent *Target,
     switch (ActionSlot.Action)
     {
     case EBattleAction::Attack:
-        if (Target)
-        {
-            const int32 dmg = Source->GetStats().Attack;
-            Target->ApplyDamage(dmg);
-        }
-        break;
+    {
+        if (!Target)
+            break;
+
+        const bool bTargetIsEnemy = (Target == EnemyCombat); // <-- add this
+        const int32 Dmg = Source->GetStats().Attack;
+
+        Target->ApplyDamage(Dmg);
+        PlayHitWiggle(bTargetIsEnemy); // now valid
+
+        const FText Msg = FText::FromString(FString::Printf(TEXT("-%d"), Dmg));
+        SpawnFloat(bTargetIsEnemy, Msg, FLinearColor(1.f, 0.25f, 0.25f));
+    }
+    break;
 
     case EBattleAction::Heal:
+    {
         Source->Heal(3);
-        break;
+
+        const bool bSourceIsEnemy = (Source == EnemyCombat);
+        const FText Msg = FText::FromString(TEXT("+3"));
+        UE_LOG(LogTemp, Log, TEXT("[FX] %s: %s"),
+               bSourceIsEnemy ? TEXT("enemy") : TEXT("player"),
+               *Msg.ToString());
+        SpawnFloat(bSourceIsEnemy, Msg, FLinearColor(0.25f, 1.f, 0.25f));
+    }
+    break;
 
     default:
         break;
@@ -313,4 +336,65 @@ void UBattleWidget::GrantVictoryXP()
         bXPGranted = true;
         UE_LOG(LogTemp, Log, TEXT("[Battle] Granted %d XP"), VictoryXP);
     }
+}
+
+void UBattleWidget::SpawnFloat(bool bOnEnemy, const FText &T, const FLinearColor &Color)
+{
+    if (!FloatingTextClass)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[FX] FloatingTextClass null"));
+        return;
+    }
+
+    UCanvasPanel *Layer = bOnEnemy ? EnemyFXLayer : PlayerFXLayer;
+
+    UFloatingTextWidget *W = CreateWidget<UFloatingTextWidget>(GetWorld(), FloatingTextClass);
+    if (!W)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[FX] CreateWidget failed"));
+        return;
+    }
+
+    W->SetTextAndColor(T, Color);
+
+    if (Layer)
+    {
+        if (UCanvasPanelSlot *S = Layer->AddChildToCanvas(W))
+        {
+            S->SetAutoSize(true);
+            S->SetZOrder(100); // au-dessus
+            S->SetAnchors(FAnchors(0.5f, 0.5f));
+            S->SetAlignment(FVector2D(0.5f, 0.5f));
+            const float jx = FMath::FRandRange(-20.f, 20.f);
+            const float jy = FMath::FRandRange(-6.f, 6.f);
+            S->SetPosition(FVector2D(jx, -20.f + jy));
+        }
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[FX] Layer null -> fallback viewport"));
+        W->AddToViewport(9999);
+    }
+
+    W->PlayAndDie();
+}
+
+void UBattleWidget::PlayHitWiggle(bool bOnEnemy)
+{
+    if (UWidgetAnimation *A = bOnEnemy ? EnemyHit : PlayerHit)
+        PlayAnimation(A, 0.f, 1);
+}
+
+void UBattleWidget::UpdateDeathMasks()
+{
+    const bool bPlayerDead = !PlayerCombat || PlayerCombat->GetStats().HP <= 0;
+    const bool bEnemyDead  = !EnemyCombat  || EnemyCombat->GetStats().HP  <= 0;
+
+    if (PlayerDeathMask)
+        PlayerDeathMask->SetVisibility(bPlayerDead ? ESlateVisibility::HitTestInvisible
+                                                    : ESlateVisibility::Collapsed);
+
+    if (EnemyDeathMask)
+        EnemyDeathMask->SetVisibility(bEnemyDead ? ESlateVisibility::HitTestInvisible
+                                                 : ESlateVisibility::Collapsed);
 }
