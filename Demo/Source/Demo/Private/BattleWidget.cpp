@@ -11,7 +11,6 @@
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
 
-
 namespace
 {
     inline void SetHP(UProgressBar *Bar, UTextBlock *Text, int32 HP, int32 MaxHP)
@@ -28,16 +27,24 @@ namespace
     }
 
     inline void SetActs(const TArray<FBattleActionSlot> &L,
-                        UTextBlock *T0, UTextBlock *T1, UTextBlock *T2, UTextBlock *T3, UTextBlock *T4)
+                        UTextBlock *T0, UTextBlock *T1, UTextBlock *T2, UTextBlock *T3, UTextBlock *T4,
+                        int32 HighlightIdx)
     {
-        auto SetOne = [](UTextBlock *T, const FBattleActionSlot &S)
-        { if (T) T->SetText(UBattleActionLibrary::ActionToText(S.Action)); };
-
-        SetOne(T0, L.IsValidIndex(0) ? L[0] : FBattleActionSlot{});
-        SetOne(T1, L.IsValidIndex(1) ? L[1] : FBattleActionSlot{});
-        SetOne(T2, L.IsValidIndex(2) ? L[2] : FBattleActionSlot{});
-        SetOne(T3, L.IsValidIndex(3) ? L[3] : FBattleActionSlot{});
-        SetOne(T4, L.IsValidIndex(4) ? L[4] : FBattleActionSlot{});
+        auto SetOne = [&](UTextBlock *T, int32 Idx)
+        {
+            if (!IsValid(T))
+                return; // safe contre nullptr / pending kill
+            const FBattleActionSlot S = L.IsValidIndex(Idx) ? L[Idx] : FBattleActionSlot{};
+            const FText Base = UBattleActionLibrary::ActionToText(S.Action);
+            T->SetText(Idx == HighlightIdx
+                           ? FText::FromString(FString::Printf(TEXT("▶ %s"), *Base.ToString()))
+                           : Base);
+        };
+        SetOne(T0, 0);
+        SetOne(T1, 1);
+        SetOne(T2, 2);
+        SetOne(T3, 3);
+        SetOne(T4, 4);
     }
 }
 
@@ -53,20 +60,24 @@ void UBattleWidget::SetSides(UCombatComponent *InPlayer, UCombatComponent *InEne
 
 void UBattleWidget::StartAutoBattle()
 {
+    HL_Player = HL_Enemy = INDEX_NONE;
     if (!PlayerCombat || !EnemyCombat)
         return;
     CurrentIndex = 0;
     bPlayerTurn = true;
+    bHighlightPlayerTurn = true; // highlight player first
     bBattleRunning = true;
     bXPGranted = false; // <-- reset
     if (BtnQuit)
         BtnQuit->SetIsEnabled(false);
-    UpdateHighlights();
+    // UpdateHighlights();
     GetWorld()->GetTimerManager().SetTimer(ActionTimer, this, &UBattleWidget::StepAction, 0.8f, true, 0.0f);
 }
 
 void UBattleWidget::StopAutoBattle()
 {
+    HL_Player = HL_Enemy = INDEX_NONE;
+    Refresh();
     bBattleRunning = false;
     if (UWorld *W = GetWorld())
     {
@@ -82,8 +93,8 @@ void UBattleWidget::NativeConstruct()
     if (BtnQuit)
         BtnQuit->OnClicked.AddDynamic(this, &UBattleWidget::OnQuitClicked);
 
-    Refresh();
-    UpdateHighlights();
+    // Remove the immediate Refresh() here. UI will refresh once SetSides() is called.
+    // Refresh();
 
     if (UWorld *W = GetWorld())
     {
@@ -101,21 +112,46 @@ void UBattleWidget::NativeDestruct()
     Super::NativeDestruct();
 }
 
+static void ClearActs(UTextBlock *T0, UTextBlock *T1, UTextBlock *T2, UTextBlock *T3, UTextBlock *T4)
+{
+    auto Clr = [&](UTextBlock *T)
+    { if (IsValid(T)) T->SetText(FText::GetEmpty()); };
+    Clr(T0);
+    Clr(T1);
+    Clr(T2);
+    Clr(T3);
+    Clr(T4);
+}
+
 void UBattleWidget::Refresh()
 {
+    // no computed highlight here; use HL_* only
     if (PlayerCombat)
     {
-        const FCombatStats& S = PlayerCombat->GetStats();
+        const auto &S = PlayerCombat->GetStats();
         SetHP(PlayerHPBar, PlayerHPText, S.HP, S.MaxHP);
-        SetActs(PlayerCombat->GetLoadout(), PlayerAct0, PlayerAct1, PlayerAct2, PlayerAct3, PlayerAct4);
+        SetActs(PlayerCombat->GetLoadout(),
+                PlayerAct0, PlayerAct1, PlayerAct2, PlayerAct3, PlayerAct4,
+                HL_Player);
     }
+    else
+    {
+        ClearActs(PlayerAct0, PlayerAct1, PlayerAct2, PlayerAct3, PlayerAct4);
+    }
+
     if (EnemyCombat)
     {
-        const FCombatStats& S = EnemyCombat->GetStats();
+        const auto &S = EnemyCombat->GetStats();
         SetHP(EnemyHPBar, EnemyHPText, S.HP, S.MaxHP);
-        SetActs(EnemyCombat->GetLoadout(), EnemyAct0, EnemyAct1, EnemyAct2, EnemyAct3, EnemyAct4);
+        SetActs(EnemyCombat->GetLoadout(),
+                EnemyAct0, EnemyAct1, EnemyAct2, EnemyAct3, EnemyAct4,
+                HL_Enemy);
     }
-    UpdateHighlights();
+    else
+    {
+        ClearActs(EnemyAct0, EnemyAct1, EnemyAct2, EnemyAct3, EnemyAct4);
+    }
+
     UpdateDeathMasks();
 }
 
@@ -237,63 +273,52 @@ void UBattleWidget::DoAction(UCombatComponent *Source, UCombatComponent *Target,
 
 void UBattleWidget::StepAction()
 {
-    if (!bBattleRunning || !PlayerCombat || !EnemyCombat)
-    {
-        StopAutoBattle();
-        return;
-    }
+    HL_Player = INDEX_NONE;
+    HL_Enemy  = INDEX_NONE;
+    if (!bBattleRunning || !PlayerCombat || !EnemyCombat) { StopAutoBattle(); return; }
+    if (PlayerCombat->GetStats().HP <= 0 || EnemyCombat->GetStats().HP <= 0) { StopAutoBattle(); return; }
 
-    if (PlayerCombat->GetStats().HP <= 0 || EnemyCombat->GetStats().HP <= 0)
-    {
-        StopAutoBattle();
-        return;
-    }
-
-    const TArray<FBattleActionSlot> &PL = PlayerCombat->GetLoadout();
-    const TArray<FBattleActionSlot> &EL = EnemyCombat->GetLoadout();
+    const TArray<FBattleActionSlot>& PL = PlayerCombat->GetLoadout();
+    const TArray<FBattleActionSlot>& EL = EnemyCombat->GetLoadout();
     const int32 MaxTurns = FMath::Max(PL.Num(), EL.Num());
-    if (CurrentIndex >= MaxTurns)
-    {
-        StopAutoBattle();
-        return;
-    }
-
-    // highlight current
-    UpdateHighlights();
+    if (CurrentIndex >= MaxTurns) { StopAutoBattle(); return; }
 
     if (bPlayerTurn)
     {
+        HL_Player = CurrentIndex;   // ← add this
+        Refresh();                  // show arrow on player BEFORE damage
+
         if (PL.IsValidIndex(CurrentIndex))
             DoAction(PlayerCombat, EnemyCombat, PL[CurrentIndex]);
 
+        Refresh();                  // show damage with same highlight
         if (EnemyCombat->GetStats().HP <= 0)
         {
-            GrantVictoryXP(); // <-- add here
+            GrantVictoryXP();       // ← add this
             StopAutoBattle();
             return;
         }
+
         bPlayerTurn = false;
         return;
     }
     else
     {
+        HL_Enemy = CurrentIndex;    // already present
+        Refresh();                  // show arrow on enemy BEFORE damage
+
         if (EL.IsValidIndex(CurrentIndex))
             DoAction(EnemyCombat, PlayerCombat, EL[CurrentIndex]);
 
-        if (PlayerCombat->GetStats().HP <= 0)
-        {
-            StopAutoBattle(); // no XP on defeat
-            return;
-        }
+        Refresh();
+        if (PlayerCombat->GetStats().HP <= 0) { StopAutoBattle(); return; }
+
         bPlayerTurn = true;
         ++CurrentIndex;
-        if (CurrentIndex >= MaxTurns)
-        {
-            StopAutoBattle();
-            return;
-        }
+        if (CurrentIndex >= MaxTurns) { StopAutoBattle(); return; }
     }
 }
+
 
 void UBattleWidget::OnQuitClicked()
 {
@@ -388,11 +413,11 @@ void UBattleWidget::PlayHitWiggle(bool bOnEnemy)
 void UBattleWidget::UpdateDeathMasks()
 {
     const bool bPlayerDead = !PlayerCombat || PlayerCombat->GetStats().HP <= 0;
-    const bool bEnemyDead  = !EnemyCombat  || EnemyCombat->GetStats().HP  <= 0;
+    const bool bEnemyDead = !EnemyCombat || EnemyCombat->GetStats().HP <= 0;
 
     if (PlayerDeathMask)
         PlayerDeathMask->SetVisibility(bPlayerDead ? ESlateVisibility::HitTestInvisible
-                                                    : ESlateVisibility::Collapsed);
+                                                   : ESlateVisibility::Collapsed);
 
     if (EnemyDeathMask)
         EnemyDeathMask->SetVisibility(bEnemyDead ? ESlateVisibility::HitTestInvisible

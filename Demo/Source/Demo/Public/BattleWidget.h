@@ -38,8 +38,6 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Battle")
     void SetVictoryXP(int32 InXP) { VictoryXP = FMath::Max(0, InXP); }
 
-    
-
 protected:
     virtual void NativeConstruct() override;
     virtual void NativeDestruct() override;
@@ -55,6 +53,9 @@ private:
     void OnQuitClicked(); // <-- new
     void SpawnFloat(bool bOnEnemy, const FText &T, const FLinearColor &Color);
     void PlayHitWiggle(bool bOnEnemy);
+    bool bHighlightPlayerTurn = true;
+    int32 HL_Player = INDEX_NONE;
+    int32 HL_Enemy  = INDEX_NONE;
 
 private:
     FTimerHandle RefreshTimer;
@@ -74,48 +75,47 @@ private:
     bool bXPGranted = false;
 
     void UpdateDeathMasks();
+
 public: // BindWidget
     // Player
-    UPROPERTY(meta = (BindWidget))
-    UImage *PlayerPortrait = nullptr;
-    UPROPERTY(meta = (BindWidget))
-    UProgressBar *PlayerHPBar = nullptr;
-    UPROPERTY(meta = (BindWidget))
-    UTextBlock *PlayerHPText = nullptr;
-    UPROPERTY(meta = (BindWidget))
+    UPROPERTY(meta = (BindWidgetOptional))
     UTextBlock *PlayerAct0 = nullptr;
-    UPROPERTY(meta = (BindWidget))
+    UPROPERTY(meta = (BindWidgetOptional))
     UTextBlock *PlayerAct1 = nullptr;
-    UPROPERTY(meta = (BindWidget))
+    UPROPERTY(meta = (BindWidgetOptional))
     UTextBlock *PlayerAct2 = nullptr;
-    UPROPERTY(meta = (BindWidget))
+    UPROPERTY(meta = (BindWidgetOptional))
     UTextBlock *PlayerAct3 = nullptr;
-    UPROPERTY(meta = (BindWidget))
+    UPROPERTY(meta = (BindWidgetOptional))
     UTextBlock *PlayerAct4 = nullptr;
 
-    // Enemy
-    UPROPERTY(meta = (BindWidget))
-    UImage *EnemyPortrait = nullptr;
-    UPROPERTY(meta = (BindWidget))
-    UProgressBar *EnemyHPBar = nullptr;
-    UPROPERTY(meta = (BindWidget))
-    UTextBlock *EnemyHPText = nullptr;
-    UPROPERTY(meta = (BindWidget))
+    UPROPERTY(meta = (BindWidgetOptional))
     UTextBlock *EnemyAct0 = nullptr;
-    UPROPERTY(meta = (BindWidget))
+    UPROPERTY(meta = (BindWidgetOptional))
     UTextBlock *EnemyAct1 = nullptr;
-    UPROPERTY(meta = (BindWidget))
+    UPROPERTY(meta = (BindWidgetOptional))
     UTextBlock *EnemyAct2 = nullptr;
-    UPROPERTY(meta = (BindWidget))
+    UPROPERTY(meta = (BindWidgetOptional))
     UTextBlock *EnemyAct3 = nullptr;
-    UPROPERTY(meta = (BindWidget))
+    UPROPERTY(meta = (BindWidgetOptional))
     UTextBlock *EnemyAct4 = nullptr;
 
+    UPROPERTY(meta = (BindWidgetOptional))
+    UImage *PlayerPortrait = nullptr;
+    UPROPERTY(meta = (BindWidgetOptional))
+    UImage *EnemyPortrait = nullptr;
+
+
+    // Player side
+UPROPERTY(meta=(BindWidgetOptional)) UProgressBar* PlayerHPBar  = nullptr;
+UPROPERTY(meta=(BindWidgetOptional)) UTextBlock*   PlayerHPText = nullptr;
+
+// Enemy side
+UPROPERTY(meta=(BindWidgetOptional)) UProgressBar* EnemyHPBar   = nullptr;
+UPROPERTY(meta=(BindWidgetOptional)) UTextBlock*   EnemyHPText  = nullptr;
     // Quit button
     UPROPERTY(meta = (BindWidget))
     UButton *BtnQuit = nullptr; // add a Button named BtnQuit in the BP
-
-    
 
     // FX layers
     UPROPERTY(EditAnywhere, Category = "Battle|FX")
@@ -128,6 +128,8 @@ public: // BindWidget
     class UWidgetAnimation *PlayerHit = nullptr;
     UPROPERTY(Transient, meta = (BindWidgetAnimOptional))
     class UWidgetAnimation *EnemyHit = nullptr;
-    UPROPERTY(meta=(BindWidget)) class UImage* PlayerDeathMask = nullptr;
-    UPROPERTY(meta=(BindWidget)) class UImage* EnemyDeathMask  = nullptr;
+    UPROPERTY(meta = (BindWidget))
+    class UImage *PlayerDeathMask = nullptr;
+    UPROPERTY(meta = (BindWidget))
+    class UImage *EnemyDeathMask = nullptr;
 };

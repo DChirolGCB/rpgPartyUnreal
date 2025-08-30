@@ -180,16 +180,24 @@ namespace
     }
 
     inline void SetActs(const TArray<FBattleActionSlot> &L,
-                        UTextBlock *T0, UTextBlock *T1, UTextBlock *T2, UTextBlock *T3, UTextBlock *T4)
+                        UTextBlock *T0, UTextBlock *T1, UTextBlock *T2, UTextBlock *T3, UTextBlock *T4,
+                        int32 HighlightIdx)
     {
-        auto SetOne = [](UTextBlock *T, const FBattleActionSlot &S)
-        { if (T) T->SetText(UBattleActionLibrary::ActionToText(S.Action)); };
-
-        SetOne(T0, L.IsValidIndex(0) ? L[0] : FBattleActionSlot{});
-        SetOne(T1, L.IsValidIndex(1) ? L[1] : FBattleActionSlot{});
-        SetOne(T2, L.IsValidIndex(2) ? L[2] : FBattleActionSlot{});
-        SetOne(T3, L.IsValidIndex(3) ? L[3] : FBattleActionSlot{});
-        SetOne(T4, L.IsValidIndex(4) ? L[4] : FBattleActionSlot{});
+        auto SetOne = [&](UTextBlock *T, int32 Idx)
+        {
+            if (!IsValid(T))
+                return; // safe contre nullptr / pending kill
+            const FBattleActionSlot S = L.IsValidIndex(Idx) ? L[Idx] : FBattleActionSlot{};
+            const FText Base = UBattleActionLibrary::ActionToText(S.Action);
+            T->SetText(Idx == HighlightIdx
+                           ? FText::FromString(FString::Printf(TEXT("â–¶ %s"), *Base.ToString()))
+                           : Base);
+        };
+        SetOne(T0, 0);
+        SetOne(T1, 1);
+        SetOne(T2, 2);
+        SetOne(T3, 3);
+        SetOne(T4, 4);
     }
 }
 
@@ -205,20 +213,24 @@ void UBattleWidget::SetSides(UCombatComponent *InPlayer, UCombatComponent *InEne
 
 void UBattleWidget::StartAutoBattle()
 {
+    HL_Player = HL_Enemy = INDEX_NONE;
     if (!PlayerCombat || !EnemyCombat)
         return;
     CurrentIndex = 0;
     bPlayerTurn = true;
+    bHighlightPlayerTurn = true; // highlight player first
     bBattleRunning = true;
     bXPGranted = false; // <-- reset
     if (BtnQuit)
         BtnQuit->SetIsEnabled(false);
-    UpdateHighlights();
+    // UpdateHighlights();
     GetWorld()->GetTimerManager().SetTimer(ActionTimer, this, &UBattleWidget::StepAction, 0.8f, true, 0.0f);
 }
 
 void UBattleWidget::StopAutoBattle()
 {
+    HL_Player = HL_Enemy = INDEX_NONE;
+    Refresh();
     bBattleRunning = false;
     if (UWorld *W = GetWorld())
     {
@@ -234,8 +246,8 @@ void UBattleWidget::NativeConstruct()
     if (BtnQuit)
         BtnQuit->OnClicked.AddDynamic(this, &UBattleWidget::OnQuitClicked);
 
-    Refresh();
-    UpdateHighlights();
+    // Remove the immediate Refresh() here. UI will refresh once SetSides() is called.
+    // Refresh();
 
     if (UWorld *W = GetWorld())
     {
@@ -253,22 +265,49 @@ void UBattleWidget::NativeDestruct()
     Super::NativeDestruct();
 }
 
+static void ClearActs(UTextBlock *T0, UTextBlock *T1, UTextBlock *T2, UTextBlock *T3, UTextBlock *T4)
+{
+    auto Clr = [&](UTextBlock *T)
+    { if (IsValid(T)) T->SetText(FText::GetEmpty()); };
+    Clr(T0);
+    Clr(T1);
+    Clr(T2);
+    Clr(T3);
+    Clr(T4);
+}
+
 void UBattleWidget::Refresh()
 {
+    // no computed highlight here; use HL_* only
     if (PlayerCombat)
     {
-        const FCombatStats &S = PlayerCombat->GetStats();
+        const auto &S = PlayerCombat->GetStats();
         SetHP(PlayerHPBar, PlayerHPText, S.HP, S.MaxHP);
-        SetActs(PlayerCombat->GetLoadout(), PlayerAct0, PlayerAct1, PlayerAct2, PlayerAct3, PlayerAct4);
+        SetActs(PlayerCombat->GetLoadout(),
+                PlayerAct0, PlayerAct1, PlayerAct2, PlayerAct3, PlayerAct4,
+                HL_Player);
     }
+    else
+    {
+        ClearActs(PlayerAct0, PlayerAct1, PlayerAct2, PlayerAct3, PlayerAct4);
+    }
+
     if (EnemyCombat)
     {
-        const FCombatStats &S = EnemyCombat->GetStats();
+        const auto &S = EnemyCombat->GetStats();
         SetHP(EnemyHPBar, EnemyHPText, S.HP, S.MaxHP);
-        SetActs(EnemyCombat->GetLoadout(), EnemyAct0, EnemyAct1, EnemyAct2, EnemyAct3, EnemyAct4);
+        SetActs(EnemyCombat->GetLoadout(),
+                EnemyAct0, EnemyAct1, EnemyAct2, EnemyAct3, EnemyAct4,
+                HL_Enemy);
     }
-    UpdateHighlights();
+    else
+    {
+        ClearActs(EnemyAct0, EnemyAct1, EnemyAct2, EnemyAct3, EnemyAct4);
+    }
+
+    UpdateDeathMasks();
 }
+
 static void ResetColor(UTextBlock *T)
 {
     if (T)
@@ -353,20 +392,32 @@ void UBattleWidget::DoAction(UCombatComponent *Source, UCombatComponent *Target,
     {
     case EBattleAction::Attack:
     {
-        if (Target)
-        {
-            const int32 dmg = Source->GetStats().Attack;
-            Target->ApplyDamage(dmg);
-            SpawnFloat(/*bOnEnemy=*/Target == EnemyCombat, FText::FromString(FString::Printf(TEXT("-%d"), dmg)), FLinearColor(1.f, 0.25f, 0.25f));
-        }
-        break;
+        if (!Target)
+            break;
+
+        const bool bTargetIsEnemy = (Target == EnemyCombat); // <-- add this
+        const int32 Dmg = Source->GetStats().Attack;
+
+        Target->ApplyDamage(Dmg);
+        PlayHitWiggle(bTargetIsEnemy); // now valid
+
+        const FText Msg = FText::FromString(FString::Printf(TEXT("-%d"), Dmg));
+        SpawnFloat(bTargetIsEnemy, Msg, FLinearColor(1.f, 0.25f, 0.25f));
     }
+    break;
+
     case EBattleAction::Heal:
     {
         Source->Heal(3);
-        SpawnFloat(/*bOnEnemy=*/Source == EnemyCombat, FText::FromString(TEXT("+3")), FLinearColor(0.25f, 1.f, 0.25f));
-        break;
+
+        const bool bSourceIsEnemy = (Source == EnemyCombat);
+        const FText Msg = FText::FromString(TEXT("+3"));
+        UE_LOG(LogTemp, Log, TEXT("[FX] %s: %s"),
+               bSourceIsEnemy ? TEXT("enemy") : TEXT("player"),
+               *Msg.ToString());
+        SpawnFloat(bSourceIsEnemy, Msg, FLinearColor(0.25f, 1.f, 0.25f));
     }
+    break;
 
     default:
         break;
@@ -375,12 +426,13 @@ void UBattleWidget::DoAction(UCombatComponent *Source, UCombatComponent *Target,
 
 void UBattleWidget::StepAction()
 {
+    HL_Player = INDEX_NONE;
+    HL_Enemy = INDEX_NONE;
     if (!bBattleRunning || !PlayerCombat || !EnemyCombat)
     {
         StopAutoBattle();
         return;
     }
-
     if (PlayerCombat->GetStats().HP <= 0 || EnemyCombat->GetStats().HP <= 0)
     {
         StopAutoBattle();
@@ -396,33 +448,40 @@ void UBattleWidget::StepAction()
         return;
     }
 
-    // highlight current
-    UpdateHighlights();
+    // lock UI highlight to the actor about to act
+    bHighlightPlayerTurn = bPlayerTurn;
+    // UpdateHighlights();
 
     if (bPlayerTurn)
     {
+        Refresh(); // show arrow on player i BEFORE damage
         if (PL.IsValidIndex(CurrentIndex))
             DoAction(PlayerCombat, EnemyCombat, PL[CurrentIndex]);
 
+        Refresh(); // show damage while still highlighting player
         if (EnemyCombat->GetStats().HP <= 0)
         {
-            GrantVictoryXP(); // <-- add here
             StopAutoBattle();
             return;
         }
-        bPlayerTurn = false;
+
+        bPlayerTurn = false; // flip logic for next tick; UI stays on player until next StepAction
         return;
     }
     else
     {
+        HL_Enemy = CurrentIndex;
+        Refresh(); // show arrow on enemy i BEFORE damage
         if (EL.IsValidIndex(CurrentIndex))
             DoAction(EnemyCombat, PlayerCombat, EL[CurrentIndex]);
 
+        Refresh(); // show damage while still highlighting enemy
         if (PlayerCombat->GetStats().HP <= 0)
         {
-            StopAutoBattle(); // no XP on defeat
+            StopAutoBattle();
             return;
         }
+
         bPlayerTurn = true;
         ++CurrentIndex;
         if (CurrentIndex >= MaxTurns)
@@ -478,25 +537,65 @@ void UBattleWidget::GrantVictoryXP()
 
 void UBattleWidget::SpawnFloat(bool bOnEnemy, const FText &T, const FLinearColor &Color)
 {
-    UCanvasPanel *Layer = bOnEnemy ? EnemyFXLayer : PlayerFXLayer;
-    if (!Layer || !FloatingTextClass)
-        return;
-
-    if (UFloatingTextWidget *W = CreateWidget<UFloatingTextWidget>(GetWorld(), FloatingTextClass))
+    if (!FloatingTextClass)
     {
-        W->SetTextAndColor(T, Color);
+        UE_LOG(LogTemp, Warning, TEXT("[FX] FloatingTextClass null"));
+        return;
+    }
+
+    UCanvasPanel *Layer = bOnEnemy ? EnemyFXLayer : PlayerFXLayer;
+
+    UFloatingTextWidget *W = CreateWidget<UFloatingTextWidget>(GetWorld(), FloatingTextClass);
+    if (!W)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[FX] CreateWidget failed"));
+        return;
+    }
+
+    W->SetTextAndColor(T, Color);
+
+    if (Layer)
+    {
         if (UCanvasPanelSlot *S = Layer->AddChildToCanvas(W))
         {
             S->SetAutoSize(true);
+            S->SetZOrder(100); // au-dessus
             S->SetAnchors(FAnchors(0.5f, 0.5f));
             S->SetAlignment(FVector2D(0.5f, 0.5f));
             const float jx = FMath::FRandRange(-20.f, 20.f);
             const float jy = FMath::FRandRange(-6.f, 6.f);
             S->SetPosition(FVector2D(jx, -20.f + jy));
         }
-        W->PlayAndDie();
     }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[FX] Layer null -> fallback viewport"));
+        W->AddToViewport(9999);
+    }
+
+    W->PlayAndDie();
 }
+
+void UBattleWidget::PlayHitWiggle(bool bOnEnemy)
+{
+    if (UWidgetAnimation *A = bOnEnemy ? EnemyHit : PlayerHit)
+        PlayAnimation(A, 0.f, 1);
+}
+
+void UBattleWidget::UpdateDeathMasks()
+{
+    const bool bPlayerDead = !PlayerCombat || PlayerCombat->GetStats().HP <= 0;
+    const bool bEnemyDead = !EnemyCombat || EnemyCombat->GetStats().HP <= 0;
+
+    if (PlayerDeathMask)
+        PlayerDeathMask->SetVisibility(bPlayerDead ? ESlateVisibility::HitTestInvisible
+                                                   : ESlateVisibility::Collapsed);
+
+    if (EnemyDeathMask)
+        EnemyDeathMask->SetVisibility(bEnemyDead ? ESlateVisibility::HitTestInvisible
+                                                 : ESlateVisibility::Collapsed);
+}
+
 
 
 ================================================
@@ -1445,6 +1544,7 @@ FILE: Private/FloatingTextWidget.cpp
 ================================================
 #include "FloatingTextWidget.h"
 #include "Components/TextBlock.h"
+#include "Animation/WidgetAnimationEvents.h"  // add
 
 void UFloatingTextWidget::SetTextAndColor(const FText& T, const FLinearColor& C)
 {
@@ -1455,13 +1555,15 @@ void UFloatingTextWidget::PlayAndDie()
 {
     if (Pop)
     {
-        BindToAnimationFinished(Pop, FWidgetAnimationDynamicEvent::CreateUObject(this, &UFloatingTextWidget::OnAnimFinished));
+        FWidgetAnimationDynamicEvent End;
+        End.BindDynamic(this, &UFloatingTextWidget::OnAnimFinished); // fix
+        BindToAnimationFinished(Pop, End);
         PlayAnimation(Pop, 0.f, 1);
     }
     else
     {
-        // no anim in BP: just self-destruct shortly
-        FTimerHandle H; GetWorld()->GetTimerManager().SetTimer(H, [this]{ RemoveFromParent(); }, 0.8f, false);
+        FTimerHandle H;
+        GetWorld()->GetTimerManager().SetTimer(H, [this]{ RemoveFromParent(); }, 0.8f, false);
     }
 }
 
@@ -3138,7 +3240,7 @@ class UProgressBar;
 class UTextBlock;
 class UButton;
 class UCombatComponent;
-class UTexture2D
+class UTexture2D;
 class UCanvasPanel;
 class UFloatingTextWidget;
 UCLASS()
@@ -3164,8 +3266,9 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Battle")
     void StopAutoBattle();
 
-    UFUNCTION(BlueprintCallable, Category="Battle")
+    UFUNCTION(BlueprintCallable, Category = "Battle")
     void SetVictoryXP(int32 InXP) { VictoryXP = FMath::Max(0, InXP); }
+
 protected:
     virtual void NativeConstruct() override;
     virtual void NativeDestruct() override;
@@ -3179,7 +3282,12 @@ private:
     void DoAction(UCombatComponent *Source, UCombatComponent *Target, const FBattleActionSlot &ActionSlot);
     UFUNCTION()
     void OnQuitClicked(); // <-- new
-    void SpawnFloat(bool bOnEnemy, const FText& T, const FLinearColor& Color);
+    void SpawnFloat(bool bOnEnemy, const FText &T, const FLinearColor &Color);
+    void PlayHitWiggle(bool bOnEnemy);
+    bool bHighlightPlayerTurn = true;
+    int32 HL_Player = INDEX_NONE;
+    int32 HL_Enemy  = INDEX_NONE;
+
 private:
     FTimerHandle RefreshTimer;
     FTimerHandle ActionTimer;
@@ -3195,54 +3303,66 @@ private:
 
     void GrantVictoryXP();
     int32 VictoryXP = 0;
-    bool  bXPGranted = false;
+    bool bXPGranted = false;
+
+    void UpdateDeathMasks();
 
 public: // BindWidget
     // Player
-    UPROPERTY(meta = (BindWidget))
-    UImage *PlayerPortrait = nullptr;
-    UPROPERTY(meta = (BindWidget))
-    UProgressBar *PlayerHPBar = nullptr;
-    UPROPERTY(meta = (BindWidget))
-    UTextBlock *PlayerHPText = nullptr;
-    UPROPERTY(meta = (BindWidget))
+    UPROPERTY(meta = (BindWidgetOptional))
     UTextBlock *PlayerAct0 = nullptr;
-    UPROPERTY(meta = (BindWidget))
+    UPROPERTY(meta = (BindWidgetOptional))
     UTextBlock *PlayerAct1 = nullptr;
-    UPROPERTY(meta = (BindWidget))
+    UPROPERTY(meta = (BindWidgetOptional))
     UTextBlock *PlayerAct2 = nullptr;
-    UPROPERTY(meta = (BindWidget))
+    UPROPERTY(meta = (BindWidgetOptional))
     UTextBlock *PlayerAct3 = nullptr;
-    UPROPERTY(meta = (BindWidget))
+    UPROPERTY(meta = (BindWidgetOptional))
     UTextBlock *PlayerAct4 = nullptr;
 
-    // Enemy
-    UPROPERTY(meta = (BindWidget))
-    UImage *EnemyPortrait = nullptr;
-    UPROPERTY(meta = (BindWidget))
-    UProgressBar *EnemyHPBar = nullptr;
-    UPROPERTY(meta = (BindWidget))
-    UTextBlock *EnemyHPText = nullptr;
-    UPROPERTY(meta = (BindWidget))
+    UPROPERTY(meta = (BindWidgetOptional))
     UTextBlock *EnemyAct0 = nullptr;
-    UPROPERTY(meta = (BindWidget))
+    UPROPERTY(meta = (BindWidgetOptional))
     UTextBlock *EnemyAct1 = nullptr;
-    UPROPERTY(meta = (BindWidget))
+    UPROPERTY(meta = (BindWidgetOptional))
     UTextBlock *EnemyAct2 = nullptr;
-    UPROPERTY(meta = (BindWidget))
+    UPROPERTY(meta = (BindWidgetOptional))
     UTextBlock *EnemyAct3 = nullptr;
-    UPROPERTY(meta = (BindWidget))
+    UPROPERTY(meta = (BindWidgetOptional))
     UTextBlock *EnemyAct4 = nullptr;
 
+    UPROPERTY(meta = (BindWidgetOptional))
+    UImage *PlayerPortrait = nullptr;
+    UPROPERTY(meta = (BindWidgetOptional))
+    UImage *EnemyPortrait = nullptr;
+
+
+    // Player side
+UPROPERTY(meta=(BindWidgetOptional)) UProgressBar* PlayerHPBar  = nullptr;
+UPROPERTY(meta=(BindWidgetOptional)) UTextBlock*   PlayerHPText = nullptr;
+
+// Enemy side
+UPROPERTY(meta=(BindWidgetOptional)) UProgressBar* EnemyHPBar   = nullptr;
+UPROPERTY(meta=(BindWidgetOptional)) UTextBlock*   EnemyHPText  = nullptr;
     // Quit button
     UPROPERTY(meta = (BindWidget))
     UButton *BtnQuit = nullptr; // add a Button named BtnQuit in the BP
 
-    UPROPERTY(EditAnywhere, Category="Battle|FX")
+    // FX layers
+    UPROPERTY(EditAnywhere, Category = "Battle|FX")
     TSubclassOf<UFloatingTextWidget> FloatingTextClass;
-
-    UPROPERTY(meta=(BindWidget)) UCanvasPanel* PlayerFXLayer = nullptr;
-    UPROPERTY(meta=(BindWidget)) UCanvasPanel* EnemyFXLayer  = nullptr;
+    UPROPERTY(meta = (BindWidget))
+    UCanvasPanel *PlayerFXLayer = nullptr;
+    UPROPERTY(meta = (BindWidget))
+    UCanvasPanel *EnemyFXLayer = nullptr;
+    UPROPERTY(Transient, meta = (BindWidgetAnimOptional))
+    class UWidgetAnimation *PlayerHit = nullptr;
+    UPROPERTY(Transient, meta = (BindWidgetAnimOptional))
+    class UWidgetAnimation *EnemyHit = nullptr;
+    UPROPERTY(meta = (BindWidget))
+    class UImage *PlayerDeathMask = nullptr;
+    UPROPERTY(meta = (BindWidget))
+    class UImage *EnemyDeathMask = nullptr;
 };
 
 
