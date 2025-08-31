@@ -171,19 +171,14 @@ void AHexPawn::Tick(float DeltaTime)
         if (HasAuthority() && SpriteComp)
             SpriteComp->SetAnimationState(EHexAnimState::Idle);
 
-        if (ADemoGameMode *GM = GetWorld()->GetAuthGameMode<ADemoGameMode>())
-        {
+        if (ADemoGameMode* GM = GetWorld()->GetAuthGameMode<ADemoGameMode>())
             GM->UpdateReachableVisibility(3);
-        }
         return;
     }
 
     StepElapsed += DeltaTime;
     float Alpha = (StepDuration > SMALL_NUMBER) ? FMath::Clamp(StepElapsed / StepDuration, 0.f, 1.f) : 1.f;
-    if (bEaseInOut)
-    {
-        Alpha = Alpha * Alpha * (3.f - 2.f * Alpha); // smoothstep
-    }
+    if (bEaseInOut) Alpha = Alpha * Alpha * (3.f - 2.f * Alpha); // smoothstep
 
     const FVector NewLoc = FMath::Lerp(StartLocation, TargetLocation, Alpha);
     SetActorLocation(NewLoc);
@@ -203,38 +198,45 @@ void AHexPawn::Tick(float DeltaTime)
 
     if (Alpha >= 1.f - KINDA_SMALL_NUMBER)
     {
+        // Snap to target of the current step
         SetActorLocation(TargetLocation);
 
+        // Update current tile based on where we just landed
         if (GridRef && CurrentPath.IsValidIndex(CurrentStepIndex))
         {
-            if (AHexTile *Landed = GridRef->GetHexTileAt(CurrentPath[CurrentStepIndex]))
-            {
+            if (AHexTile* Landed = GridRef->GetHexTileAt(CurrentPath[CurrentStepIndex]))
                 CurrentTile = Landed;
-            }
         }
 
+        // Advance to next step
         ++CurrentStepIndex;
 
+        // Finished path?
         if (!GridRef || !CurrentPath.IsValidIndex(CurrentStepIndex))
         {
             bIsMoving = false;
             if (HasAuthority() && SpriteComp)
                 SpriteComp->SetAnimationState(EHexAnimState::Idle);
-            if (ADemoGameMode *GM = GetWorld()->GetAuthGameMode<ADemoGameMode>())
+
+            if (ADemoGameMode* GM = GetWorld()->GetAuthGameMode<ADemoGameMode>())
             {
+                GM->OnPawnArrived(this);          // <-- trigger tile effects (enemy, etc.)
                 GM->UpdateReachableVisibility(3);
             }
             return;
         }
 
-        AHexTile *NextTile = GridRef->GetHexTileAt(CurrentPath[CurrentStepIndex]);
+        // Prepare next step
+        AHexTile* NextTile = GridRef->GetHexTileAt(CurrentPath[CurrentStepIndex]);
         if (!NextTile)
         {
             bIsMoving = false;
             if (HasAuthority() && SpriteComp)
                 SpriteComp->SetAnimationState(EHexAnimState::Idle);
-            if (ADemoGameMode *GM = GetWorld()->GetAuthGameMode<ADemoGameMode>())
+
+            if (ADemoGameMode* GM = GetWorld()->GetAuthGameMode<ADemoGameMode>())
             {
+                GM->OnPawnArrived(this);
                 GM->UpdateReachableVisibility(3);
             }
             return;
@@ -243,18 +245,21 @@ void AHexPawn::Tick(float DeltaTime)
         // Optional sanity: require adjacency
         if (CurrentTile && GridRef)
         {
-            const FHexAxialCoordinates Cur = CurrentTile->GetAxialCoordinates();
+            const FHexAxialCoordinates Cur  = CurrentTile->GetAxialCoordinates();
             const FHexAxialCoordinates Next = CurrentPath[CurrentStepIndex];
             const bool bAdjacent = GridRef->GetNeighbors(Cur).Contains(Next);
             if (!bAdjacent || !GridRef->GetHexTileAt(Next))
             {
                 UE_LOG(LogTemp, Warning, TEXT("[Move] Invalid step: (%d,%d)->(%d,%d). Stop."),
                        Cur.Q, Cur.R, Next.Q, Next.R);
+
                 bIsMoving = false;
                 if (HasAuthority() && SpriteComp)
                     SpriteComp->SetAnimationState(EHexAnimState::Idle);
-                if (ADemoGameMode *GM = GetWorld()->GetAuthGameMode<ADemoGameMode>())
+
+                if (ADemoGameMode* GM = GetWorld()->GetAuthGameMode<ADemoGameMode>())
                 {
+                    GM->OnPawnArrived(this);
                     GM->UpdateReachableVisibility(3);
                 }
                 return;

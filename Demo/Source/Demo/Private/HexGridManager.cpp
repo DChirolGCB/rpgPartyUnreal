@@ -94,6 +94,12 @@ void UHexGridManager::RebuildGrid()
 
             const FHexAxialCoordinates Axial = MapSpawnIndexToAxial(q, r); // <- mapping corrigé
             Tile->SetAxialCoordinates(Axial);
+            if (bRandomizeEnemyOnBuild && Tile && Tile->GetTileType() == EHexTileType::Normal)
+{
+    const float roll = FMath::FRand();     // was: const float r = EnemyRng.FRand();
+    if (roll < EnemyChance)
+        Tile->SetTileType(EHexTileType::Enemy);
+}
 #if WITH_EDITOR
             Tile->SetActorLabel(FString::Printf(TEXT("Hex (%d,%d)"), Axial.Q, Axial.R));
 #endif
@@ -124,6 +130,9 @@ void UHexGridManager::ApplySpecialTiles()
             UE_LOG(LogTemp, Warning, TEXT("[Hex] Shop coord inconnue (%d,%d)"), C.Q, C.R);
         }
     }
+    for (const FHexAxialCoordinates& C : EnemyTiles)
+    if (AHexTile* T = GetHexTileAt(C))
+        T->SetTileType(EHexTileType::Enemy);
 }
 
 FVector UHexGridManager::ComputeTileSpawnPosition(int32 Q, int32 R) const

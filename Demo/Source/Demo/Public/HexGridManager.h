@@ -115,6 +115,8 @@ public:
     UPROPERTY(EditAnywhere, Category = "Hex|Rules")
     bool bAllowDiagonalAxialNeighbors = true;
 
+    
+
 private:
     /** Calcule la position finale (X,Y,Z) d’une tuile (Q,R) :
      *  - XY selon le layout (XSpacingFactor/YSpacingFactor + offset demi-ligne configurable)
@@ -141,10 +143,21 @@ private:
     UPROPERTY(EditAnywhere, Category = "Hex|Data")
     TArray<FHexAxialCoordinates> ShopTiles; // coords en doubled-Q
 
+    UPROPERTY(EditAnywhere, Category="Hex|Special")
+    TArray<FHexAxialCoordinates> EnemyTiles; 
+
     UFUNCTION(BlueprintCallable, Category = "Hex")
     void ApplySpecialTiles();
 
     FHexAxialCoordinates MapSpawnIndexToAxial(int32 Q, int32 R) const;
+
+    UPROPERTY(EditAnywhere, Category="Hex|Special")
+    bool bRandomizeEnemyOnBuild = true;
+
+    UPROPERTY(EditAnywhere, Category = "Hex|Special", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+    float EnemyChance = 0.25f;
+
+    FRandomStream EnemyRng;
 
 public:
     /** Distance entre A et B selon la convention courante (doubled-q ou non) */

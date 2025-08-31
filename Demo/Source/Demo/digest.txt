@@ -151,451 +151,7 @@ FILE: Private/BattleActions.cpp
 ================================================
 FILE: Private/BattleWidget.cpp
 ================================================
-#include "BattleWidget.h"
-#include "Components/ProgressBar.h"
-#include "Components/TextBlock.h"
-#include "Components/Image.h"
-#include "Components/Button.h"
-#include "CombatComponent.h"
-#include "BattleActions.h"
-#include "Engine/World.h"
-#include "TimerManager.h"
-#include "FloatingTextWidget.h"
-#include "Components/CanvasPanel.h"
-#include "Components/CanvasPanelSlot.h"
-
-namespace
-{
-    inline void SetHP(UProgressBar *Bar, UTextBlock *Text, int32 HP, int32 MaxHP)
-    {
-        if (Bar)
-        {
-            const float Pct = MaxHP > 0 ? float(HP) / float(MaxHP) : 0.f;
-            Bar->SetPercent(Pct);
-        }
-        if (Text)
-        {
-            Text->SetText(FText::FromString(FString::Printf(TEXT("HP: %d / %d"), HP, MaxHP)));
-        }
-    }
-
-    inline void SetActs(const TArray<FBattleActionSlot> &L,
-                        UTextBlock *T0, UTextBlock *T1, UTextBlock *T2, UTextBlock *T3, UTextBlock *T4,
-                        int32 HighlightIdx)
-    {
-        auto SetOne = [&](UTextBlock *T, int32 Idx)
-        {
-            if (!IsValid(T))
-                return; // safe contre nullptr / pending kill
-            const FBattleActionSlot S = L.IsValidIndex(Idx) ? L[Idx] : FBattleActionSlot{};
-            const FText Base = UBattleActionLibrary::ActionToText(S.Action);
-            T->SetText(Idx == HighlightIdx
-                           ? FText::FromString(FString::Printf(TEXT("â–¶ %s"), *Base.ToString()))
-                           : Base);
-        };
-        SetOne(T0, 0);
-        SetOne(T1, 1);
-        SetOne(T2, 2);
-        SetOne(T3, 3);
-        SetOne(T4, 4);
-    }
-}
-
-UBattleWidget::UBattleWidget(const FObjectInitializer &O) : Super(O) {}
-
-void UBattleWidget::SetSides(UCombatComponent *InPlayer, UCombatComponent *InEnemy)
-{
-    PlayerCombat = InPlayer;
-    EnemyCombat = InEnemy;
-    Refresh();
-    StartAutoBattle();
-}
-
-void UBattleWidget::StartAutoBattle()
-{
-    HL_Player = HL_Enemy = INDEX_NONE;
-    if (!PlayerCombat || !EnemyCombat)
-        return;
-    CurrentIndex = 0;
-    bPlayerTurn = true;
-    bHighlightPlayerTurn = true; // highlight player first
-    bBattleRunning = true;
-    bXPGranted = false; // <-- reset
-    if (BtnQuit)
-        BtnQuit->SetIsEnabled(false);
-    // UpdateHighlights();
-    GetWorld()->GetTimerManager().SetTimer(ActionTimer, this, &UBattleWidget::StepAction, 0.8f, true, 0.0f);
-}
-
-void UBattleWidget::StopAutoBattle()
-{
-    HL_Player = HL_Enemy = INDEX_NONE;
-    Refresh();
-    bBattleRunning = false;
-    if (UWorld *W = GetWorld())
-    {
-        W->GetTimerManager().ClearTimer(ActionTimer);
-    }
-    if (BtnQuit)
-        BtnQuit->SetIsEnabled(true);
-}
-
-void UBattleWidget::NativeConstruct()
-{
-    Super::NativeConstruct();
-    if (BtnQuit)
-        BtnQuit->OnClicked.AddDynamic(this, &UBattleWidget::OnQuitClicked);
-
-    // Remove the immediate Refresh() here. UI will refresh once SetSides() is called.
-    // Refresh();
-
-    if (UWorld *W = GetWorld())
-    {
-        W->GetTimerManager().SetTimer(RefreshTimer, this, &UBattleWidget::Refresh, 0.10f, true);
-    }
-}
-
-void UBattleWidget::NativeDestruct()
-{
-    if (UWorld *W = GetWorld())
-    {
-        W->GetTimerManager().ClearTimer(RefreshTimer);
-        W->GetTimerManager().ClearTimer(ActionTimer);
-    }
-    Super::NativeDestruct();
-}
-
-static void ClearActs(UTextBlock *T0, UTextBlock *T1, UTextBlock *T2, UTextBlock *T3, UTextBlock *T4)
-{
-    auto Clr = [&](UTextBlock *T)
-    { if (IsValid(T)) T->SetText(FText::GetEmpty()); };
-    Clr(T0);
-    Clr(T1);
-    Clr(T2);
-    Clr(T3);
-    Clr(T4);
-}
-
-void UBattleWidget::Refresh()
-{
-    // no computed highlight here; use HL_* only
-    if (PlayerCombat)
-    {
-        const auto &S = PlayerCombat->GetStats();
-        SetHP(PlayerHPBar, PlayerHPText, S.HP, S.MaxHP);
-        SetActs(PlayerCombat->GetLoadout(),
-                PlayerAct0, PlayerAct1, PlayerAct2, PlayerAct3, PlayerAct4,
-                HL_Player);
-    }
-    else
-    {
-        ClearActs(PlayerAct0, PlayerAct1, PlayerAct2, PlayerAct3, PlayerAct4);
-    }
-
-    if (EnemyCombat)
-    {
-        const auto &S = EnemyCombat->GetStats();
-        SetHP(EnemyHPBar, EnemyHPText, S.HP, S.MaxHP);
-        SetActs(EnemyCombat->GetLoadout(),
-                EnemyAct0, EnemyAct1, EnemyAct2, EnemyAct3, EnemyAct4,
-                HL_Enemy);
-    }
-    else
-    {
-        ClearActs(EnemyAct0, EnemyAct1, EnemyAct2, EnemyAct3, EnemyAct4);
-    }
-
-    UpdateDeathMasks();
-}
-
-static void ResetColor(UTextBlock *T)
-{
-    if (T)
-        T->SetColorAndOpacity(FSlateColor(FLinearColor::White));
-}
-static void Highlight(UTextBlock *T)
-{
-    if (T)
-        T->SetColorAndOpacity(FSlateColor(FLinearColor(1.f, 0.85f, 0.2f, 1.f))); // soft yellow
-}
-
-UTextBlock *UBattleWidget::PlayerActTextAt(int32 Index) const
-{
-    switch (Index)
-    {
-    case 0:
-        return PlayerAct0;
-    case 1:
-        return PlayerAct1;
-    case 2:
-        return PlayerAct2;
-    case 3:
-        return PlayerAct3;
-    case 4:
-        return PlayerAct4;
-    default:
-        return nullptr;
-    }
-}
-UTextBlock *UBattleWidget::EnemyActTextAt(int32 Index) const
-{
-    switch (Index)
-    {
-    case 0:
-        return EnemyAct0;
-    case 1:
-        return EnemyAct1;
-    case 2:
-        return EnemyAct2;
-    case 3:
-        return EnemyAct3;
-    case 4:
-        return EnemyAct4;
-    default:
-        return nullptr;
-    }
-}
-
-void UBattleWidget::UpdateHighlights()
-{
-    // clear all
-    ResetColor(PlayerAct0);
-    ResetColor(PlayerAct1);
-    ResetColor(PlayerAct2);
-    ResetColor(PlayerAct3);
-    ResetColor(PlayerAct4);
-    ResetColor(EnemyAct0);
-    ResetColor(EnemyAct1);
-    ResetColor(EnemyAct2);
-    ResetColor(EnemyAct3);
-    ResetColor(EnemyAct4);
-
-    if (!bBattleRunning)
-        return;
-
-    if (bPlayerTurn)
-    {
-        Highlight(PlayerActTextAt(CurrentIndex));
-    }
-    else
-    {
-        Highlight(EnemyActTextAt(CurrentIndex));
-    }
-}
-
-void UBattleWidget::DoAction(UCombatComponent *Source, UCombatComponent *Target, const FBattleActionSlot &ActionSlot)
-{
-    if (!Source)
-        return;
-
-    switch (ActionSlot.Action)
-    {
-    case EBattleAction::Attack:
-    {
-        if (!Target)
-            break;
-
-        const bool bTargetIsEnemy = (Target == EnemyCombat); // <-- add this
-        const int32 Dmg = Source->GetStats().Attack;
-
-        Target->ApplyDamage(Dmg);
-        PlayHitWiggle(bTargetIsEnemy); // now valid
-
-        const FText Msg = FText::FromString(FString::Printf(TEXT("-%d"), Dmg));
-        SpawnFloat(bTargetIsEnemy, Msg, FLinearColor(1.f, 0.25f, 0.25f));
-    }
-    break;
-
-    case EBattleAction::Heal:
-    {
-        Source->Heal(3);
-
-        const bool bSourceIsEnemy = (Source == EnemyCombat);
-        const FText Msg = FText::FromString(TEXT("+3"));
-        UE_LOG(LogTemp, Log, TEXT("[FX] %s: %s"),
-               bSourceIsEnemy ? TEXT("enemy") : TEXT("player"),
-               *Msg.ToString());
-        SpawnFloat(bSourceIsEnemy, Msg, FLinearColor(0.25f, 1.f, 0.25f));
-    }
-    break;
-
-    default:
-        break;
-    }
-}
-
-void UBattleWidget::StepAction()
-{
-    HL_Player = INDEX_NONE;
-    HL_Enemy = INDEX_NONE;
-    if (!bBattleRunning || !PlayerCombat || !EnemyCombat)
-    {
-        StopAutoBattle();
-        return;
-    }
-    if (PlayerCombat->GetStats().HP <= 0 || EnemyCombat->GetStats().HP <= 0)
-    {
-        StopAutoBattle();
-        return;
-    }
-
-    const TArray<FBattleActionSlot> &PL = PlayerCombat->GetLoadout();
-    const TArray<FBattleActionSlot> &EL = EnemyCombat->GetLoadout();
-    const int32 MaxTurns = FMath::Max(PL.Num(), EL.Num());
-    if (CurrentIndex >= MaxTurns)
-    {
-        StopAutoBattle();
-        return;
-    }
-
-    // lock UI highlight to the actor about to act
-    bHighlightPlayerTurn = bPlayerTurn;
-    // UpdateHighlights();
-
-    if (bPlayerTurn)
-    {
-        Refresh(); // show arrow on player i BEFORE damage
-        if (PL.IsValidIndex(CurrentIndex))
-            DoAction(PlayerCombat, EnemyCombat, PL[CurrentIndex]);
-
-        Refresh(); // show damage while still highlighting player
-        if (EnemyCombat->GetStats().HP <= 0)
-        {
-            StopAutoBattle();
-            return;
-        }
-
-        bPlayerTurn = false; // flip logic for next tick; UI stays on player until next StepAction
-        return;
-    }
-    else
-    {
-        HL_Enemy = CurrentIndex;
-        Refresh(); // show arrow on enemy i BEFORE damage
-        if (EL.IsValidIndex(CurrentIndex))
-            DoAction(EnemyCombat, PlayerCombat, EL[CurrentIndex]);
-
-        Refresh(); // show damage while still highlighting enemy
-        if (PlayerCombat->GetStats().HP <= 0)
-        {
-            StopAutoBattle();
-            return;
-        }
-
-        bPlayerTurn = true;
-        ++CurrentIndex;
-        if (CurrentIndex >= MaxTurns)
-        {
-            StopAutoBattle();
-            return;
-        }
-    }
-}
-
-void UBattleWidget::OnQuitClicked()
-{
-    StopAutoBattle();
-
-    if (APlayerController *PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr)
-    {
-        FInputModeGameAndUI Mode; // keep UI-style input
-        Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-        PC->SetInputMode(Mode);
-        PC->bShowMouseCursor = true; // keep cursor visible
-    }
-
-    RemoveFromParent();
-}
-
-void UBattleWidget::SetEnemyPortrait(UTexture2D *Tex)
-{
-    if (EnemyPortrait && Tex)
-    {
-        EnemyPortrait->SetBrushFromTexture(Tex, /*bMatchSize*/ true);
-        EnemyPortrait->SetColorAndOpacity(FLinearColor::White); // in case tint was non-white
-    }
-}
-
-void UBattleWidget::SetPlayerPortrait(UTexture2D *Tex)
-{
-    if (PlayerPortrait && Tex)
-    {
-        PlayerPortrait->SetBrushFromTexture(Tex, true);
-        PlayerPortrait->SetColorAndOpacity(FLinearColor::White);
-    }
-}
-
-void UBattleWidget::GrantVictoryXP()
-{
-    if (!bXPGranted && PlayerCombat && VictoryXP > 0)
-    {
-        PlayerCombat->AddXP(VictoryXP);
-        bXPGranted = true;
-        UE_LOG(LogTemp, Log, TEXT("[Battle] Granted %d XP"), VictoryXP);
-    }
-}
-
-void UBattleWidget::SpawnFloat(bool bOnEnemy, const FText &T, const FLinearColor &Color)
-{
-    if (!FloatingTextClass)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[FX] FloatingTextClass null"));
-        return;
-    }
-
-    UCanvasPanel *Layer = bOnEnemy ? EnemyFXLayer : PlayerFXLayer;
-
-    UFloatingTextWidget *W = CreateWidget<UFloatingTextWidget>(GetWorld(), FloatingTextClass);
-    if (!W)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[FX] CreateWidget failed"));
-        return;
-    }
-
-    W->SetTextAndColor(T, Color);
-
-    if (Layer)
-    {
-        if (UCanvasPanelSlot *S = Layer->AddChildToCanvas(W))
-        {
-            S->SetAutoSize(true);
-            S->SetZOrder(100); // au-dessus
-            S->SetAnchors(FAnchors(0.5f, 0.5f));
-            S->SetAlignment(FVector2D(0.5f, 0.5f));
-            const float jx = FMath::FRandRange(-20.f, 20.f);
-            const float jy = FMath::FRandRange(-6.f, 6.f);
-            S->SetPosition(FVector2D(jx, -20.f + jy));
-        }
-    }
-    else
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[FX] Layer null -> fallback viewport"));
-        W->AddToViewport(9999);
-    }
-
-    W->PlayAndDie();
-}
-
-void UBattleWidget::PlayHitWiggle(bool bOnEnemy)
-{
-    if (UWidgetAnimation *A = bOnEnemy ? EnemyHit : PlayerHit)
-        PlayAnimation(A, 0.f, 1);
-}
-
-void UBattleWidget::UpdateDeathMasks()
-{
-    const bool bPlayerDead = !PlayerCombat || PlayerCombat->GetStats().HP <= 0;
-    const bool bEnemyDead = !EnemyCombat || EnemyCombat->GetStats().HP <= 0;
-
-    if (PlayerDeathMask)
-        PlayerDeathMask->SetVisibility(bPlayerDead ? ESlateVisibility::HitTestInvisible
-                                                   : ESlateVisibility::Collapsed);
-
-    if (EnemyDeathMask)
-        EnemyDeathMask->SetVisibility(bEnemyDead ? ESlateVisibility::HitTestInvisible
-                                                 : ESlateVisibility::Collapsed);
-}
-
+Error reading file with 'cp1252': 'charmap' codec can't decode byte 0x90 in position 7881: character maps to <undefined>
 
 
 ================================================
@@ -938,7 +494,6 @@ ADemoGameMode::ADemoGameMode()
 void ADemoGameMode::BeginPlay()
 {
     Super::BeginPlay();
-
     if (APlayerController *PC = GetWorld()->GetFirstPlayerController())
     {
         PC->InputComponent->BindAction("TestBattle", IE_Pressed, this, &ADemoGameMode::StartTestBattle);
@@ -1112,14 +667,22 @@ void ADemoGameMode::HandleTileClicked(AHexTile *ClickedTile)
 
     AHexTile *FromTile = HexP->GetCurrentTile();
     if (!FromTile)
+{
+    HexP->SetCurrentTile(ClickedTile);
+    HexP->SetActorLocation(ClickedTile->GetActorLocation());
+    UE_LOG(LogTemp, Warning, TEXT("Affectation initiale -> (%d,%d)"),
+           ClickedTile->GetAxialCoordinates().Q, ClickedTile->GetAxialCoordinates().R);
+
+    if (ClickedTile->GetTileType() == EHexTileType::Enemy)
     {
-        HexP->SetCurrentTile(ClickedTile);
-        HexP->SetActorLocation(ClickedTile->GetActorLocation());
-        UE_LOG(LogTemp, Warning, TEXT("Affectation initiale de la tuile du Pawn -> (%d,%d)"),
-               ClickedTile->GetAxialCoordinates().Q, ClickedTile->GetAxialCoordinates().R);
-        UpdateReachableVisibility(3);
-        return;
+        StartTestBattle();
+        // keep tile as Enemy as requested
+        // ClickedTile->SetTileType(EHexTileType::Normal); // do NOT reset now
     }
+    UpdateReachableVisibility(3);
+    return;
+}
+
 
     const FHexAxialCoordinates Start = FromTile->GetAxialCoordinates();
     const FHexAxialCoordinates Goal = ClickedTile->GetAxialCoordinates();
@@ -1538,6 +1101,20 @@ FName ADemoGameMode::PickRandomEnemyIdFromCatalog() const
     return Keys[idx];
 }
 
+void ADemoGameMode::OnPawnArrived(AHexPawn* Pawn)
+{
+    if (!Pawn) return;
+    if (AHexTile* T = Pawn->GetCurrentTile())
+    {
+        if (T->GetTileType() == EHexTileType::Enemy)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[TileEvent] Enemy tile at (%d,%d)"),
+                   T->GetAxialCoordinates().Q, T->GetAxialCoordinates().R);
+            StartTestBattle();
+        }
+    }
+}
+
 
 ================================================
 FILE: Private/FloatingTextWidget.cpp
@@ -1743,6 +1320,12 @@ void UHexGridManager::RebuildGrid()
 
             const FHexAxialCoordinates Axial = MapSpawnIndexToAxial(q, r); // <- mapping corrigÃ©
             Tile->SetAxialCoordinates(Axial);
+            if (bRandomizeEnemyOnBuild && Tile && Tile->GetTileType() == EHexTileType::Normal)
+{
+    const float roll = FMath::FRand();     // was: const float r = EnemyRng.FRand();
+    if (roll < EnemyChance)
+        Tile->SetTileType(EHexTileType::Enemy);
+}
 #if WITH_EDITOR
             Tile->SetActorLabel(FString::Printf(TEXT("Hex (%d,%d)"), Axial.Q, Axial.R));
 #endif
@@ -1773,6 +1356,9 @@ void UHexGridManager::ApplySpecialTiles()
             UE_LOG(LogTemp, Warning, TEXT("[Hex] Shop coord inconnue (%d,%d)"), C.Q, C.R);
         }
     }
+    for (const FHexAxialCoordinates& C : EnemyTiles)
+    if (AHexTile* T = GetHexTileAt(C))
+        T->SetTileType(EHexTileType::Enemy);
 }
 
 FVector UHexGridManager::ComputeTileSpawnPosition(int32 Q, int32 R) const
@@ -2357,19 +1943,14 @@ void AHexPawn::Tick(float DeltaTime)
         if (HasAuthority() && SpriteComp)
             SpriteComp->SetAnimationState(EHexAnimState::Idle);
 
-        if (ADemoGameMode *GM = GetWorld()->GetAuthGameMode<ADemoGameMode>())
-        {
+        if (ADemoGameMode* GM = GetWorld()->GetAuthGameMode<ADemoGameMode>())
             GM->UpdateReachableVisibility(3);
-        }
         return;
     }
 
     StepElapsed += DeltaTime;
     float Alpha = (StepDuration > SMALL_NUMBER) ? FMath::Clamp(StepElapsed / StepDuration, 0.f, 1.f) : 1.f;
-    if (bEaseInOut)
-    {
-        Alpha = Alpha * Alpha * (3.f - 2.f * Alpha); // smoothstep
-    }
+    if (bEaseInOut) Alpha = Alpha * Alpha * (3.f - 2.f * Alpha); // smoothstep
 
     const FVector NewLoc = FMath::Lerp(StartLocation, TargetLocation, Alpha);
     SetActorLocation(NewLoc);
@@ -2389,38 +1970,45 @@ void AHexPawn::Tick(float DeltaTime)
 
     if (Alpha >= 1.f - KINDA_SMALL_NUMBER)
     {
+        // Snap to target of the current step
         SetActorLocation(TargetLocation);
 
+        // Update current tile based on where we just landed
         if (GridRef && CurrentPath.IsValidIndex(CurrentStepIndex))
         {
-            if (AHexTile *Landed = GridRef->GetHexTileAt(CurrentPath[CurrentStepIndex]))
-            {
+            if (AHexTile* Landed = GridRef->GetHexTileAt(CurrentPath[CurrentStepIndex]))
                 CurrentTile = Landed;
-            }
         }
 
+        // Advance to next step
         ++CurrentStepIndex;
 
+        // Finished path?
         if (!GridRef || !CurrentPath.IsValidIndex(CurrentStepIndex))
         {
             bIsMoving = false;
             if (HasAuthority() && SpriteComp)
                 SpriteComp->SetAnimationState(EHexAnimState::Idle);
-            if (ADemoGameMode *GM = GetWorld()->GetAuthGameMode<ADemoGameMode>())
+
+            if (ADemoGameMode* GM = GetWorld()->GetAuthGameMode<ADemoGameMode>())
             {
+                GM->OnPawnArrived(this);          // <-- trigger tile effects (enemy, etc.)
                 GM->UpdateReachableVisibility(3);
             }
             return;
         }
 
-        AHexTile *NextTile = GridRef->GetHexTileAt(CurrentPath[CurrentStepIndex]);
+        // Prepare next step
+        AHexTile* NextTile = GridRef->GetHexTileAt(CurrentPath[CurrentStepIndex]);
         if (!NextTile)
         {
             bIsMoving = false;
             if (HasAuthority() && SpriteComp)
                 SpriteComp->SetAnimationState(EHexAnimState::Idle);
-            if (ADemoGameMode *GM = GetWorld()->GetAuthGameMode<ADemoGameMode>())
+
+            if (ADemoGameMode* GM = GetWorld()->GetAuthGameMode<ADemoGameMode>())
             {
+                GM->OnPawnArrived(this);
                 GM->UpdateReachableVisibility(3);
             }
             return;
@@ -2429,18 +2017,21 @@ void AHexPawn::Tick(float DeltaTime)
         // Optional sanity: require adjacency
         if (CurrentTile && GridRef)
         {
-            const FHexAxialCoordinates Cur = CurrentTile->GetAxialCoordinates();
+            const FHexAxialCoordinates Cur  = CurrentTile->GetAxialCoordinates();
             const FHexAxialCoordinates Next = CurrentPath[CurrentStepIndex];
             const bool bAdjacent = GridRef->GetNeighbors(Cur).Contains(Next);
             if (!bAdjacent || !GridRef->GetHexTileAt(Next))
             {
                 UE_LOG(LogTemp, Warning, TEXT("[Move] Invalid step: (%d,%d)->(%d,%d). Stop."),
                        Cur.Q, Cur.R, Next.Q, Next.R);
+
                 bIsMoving = false;
                 if (HasAuthority() && SpriteComp)
                     SpriteComp->SetAnimationState(EHexAnimState::Idle);
-                if (ADemoGameMode *GM = GetWorld()->GetAuthGameMode<ADemoGameMode>())
+
+                if (ADemoGameMode* GM = GetWorld()->GetAuthGameMode<ADemoGameMode>())
                 {
+                    GM->OnPawnArrived(this);
                     GM->UpdateReachableVisibility(3);
                 }
                 return;
@@ -2604,295 +2195,7 @@ void UHexSpriteComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty> &
 ================================================
 FILE: Private/HexTile.cpp
 ================================================
-#include "HexTile.h"
-#include "Components/SceneComponent.h"
-#include "Components/StaticMeshComponent.h"
-#include "Kismet/GameplayStatics.h"
-#include "DemoGameMode.h"
-#include "Materials/MaterialInstanceDynamic.h"
-
-namespace
-{
-	// Material parameter names (avoids repeated FName allocations)
-	static const FName PARAM_BaseColor = TEXT("BaseColor");
-	static const FName PARAM_Color = TEXT("Color");
-	static const FName PARAM_Albedo = TEXT("Albedo");
-	static const FName PARAM_Opacity = TEXT("Opacity");
-	static const FName PARAM_EmissiveColor = TEXT("EmissiveColor");
-	static const FName PARAM_EmissiveStr = TEXT("EmissiveStrength");
-	static const FName PARAM_IsHighlighted = TEXT("IsHighlighted");
-}
-
-AHexTile::AHexTile()
-{
-	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
-	RootComponent = SceneRoot;
-
-	PrimaryActorTick.bCanEverTick = true;
-	SetActorTickEnabled(false);
-}
-
-/** Called when the game starts or when spawned */
-void AHexTile::BeginPlay()
-{
-	Super::BeginPlay();
-
-	BaseZ = GetActorLocation().Z;
-	TargetZ = BaseZ;
-	bElevInterpActive = false;
-
-	UStaticMeshComponent *Mesh = GetVisualMesh();
-	if (!Mesh)
-	{
-		UE_LOG(LogTemp, Error, TEXT("HexTile: no visual mesh found on %s"), *GetName());
-		return;
-	}
-
-	// Ensure mesh can move visually
-	if (Mesh->Mobility != EComponentMobility::Movable)
-	{
-		Mesh->SetMobility(EComponentMobility::Movable);
-	}
-
-	// Create MID once
-	if (!DynamicMaterial)
-	{
-		DynamicMaterial = Mesh->CreateAndSetMaterialInstanceDynamic(0);
-	}
-
-	// Initialize visual parameters
-	if (DynamicMaterial)
-	{
-		const float V = bIsHighlighted ? 1.0f : 0.0f;
-		DynamicMaterial->SetScalarParameterValue(PARAM_IsHighlighted, V);
-		UpdateMaterialColor();
-	}
-
-	// Optional shop tint
-	if (DynamicMaterial && TileType == EHexTileType::Shop)
-	{
-		DynamicMaterial->SetVectorParameterValue(PARAM_BaseColor, TypeTint_Shop);
-		DynamicMaterial->SetVectorParameterValue(PARAM_EmissiveColor, TypeTint_Shop);
-		DynamicMaterial->SetScalarParameterValue(PARAM_EmissiveStr, 0.5f);
-	}
-}
-
-/** Called every frame */
-void AHexTile::Tick(float DeltaSeconds)
-{
-	Super::Tick(DeltaSeconds);
-
-	if (!bElevInterpActive)
-	{
-		return;
-	}
-
-	FVector Loc = GetActorLocation();
-	const float NewZ = FMath::FInterpTo(Loc.Z, TargetZ, DeltaSeconds, HighlightLerpSpeed);
-	Loc.Z = NewZ;
-	SetActorLocation(Loc);
-
-	if (FMath::IsNearlyEqual(NewZ, TargetZ, 0.5f))
-	{
-		Loc.Z = TargetZ;
-		SetActorLocation(Loc);
-		bElevInterpActive = false;
-		SetActorTickEnabled(false);
-	}
-}
-
-/** Bind click and hover events */
-void AHexTile::PostInitializeComponents()
-{
-	Super::PostInitializeComponents();
-
-	OnClicked.AddDynamic(this, &AHexTile::HandleOnClicked);
-	OnBeginCursorOver.AddDynamic(this, &AHexTile::HandleOnBeginCursorOver);
-	OnEndCursorOver.AddDynamic(this, &AHexTile::HandleOnEndCursorOver);
-}
-
-/** Returns the main visual mesh of the tile (cached) */
-UStaticMeshComponent *AHexTile::GetVisualMesh()
-{
-	if (IsValid(CachedVisualMesh) && !CachedVisualMesh->IsBeingDestroyed())
-	{
-		return CachedVisualMesh;
-	}
-
-	if (IsValid(TileMesh))
-	{
-		return CachedVisualMesh = TileMesh;
-	}
-
-	TArray<UStaticMeshComponent *> Comps;
-	GetComponents<UStaticMeshComponent>(Comps);
-
-	if (VisualMeshTag != NAME_None)
-	{
-		for (auto *C : Comps)
-		{
-			if (IsValid(C) && C->ComponentHasTag(VisualMeshTag))
-			{
-				return CachedVisualMesh = C;
-			}
-		}
-	}
-
-	const FString Wanted = VisualMeshName.ToString();
-	for (auto *C : Comps)
-	{
-		if (IsValid(C) && C->GetName().Equals(Wanted, ESearchCase::CaseSensitive))
-		{
-			return CachedVisualMesh = C;
-		}
-	}
-
-	return CachedVisualMesh = (Comps.Num() ? Comps[0] : nullptr);
-}
-
-/** Called when the tile is clicked */
-void AHexTile::HandleOnClicked(AActor *, FKey)
-{
-	if (TileType == EHexTileType::Shop || bIsShop || ActorHasTag(TEXT("Shop")))
-	{
-		if (ADemoGameMode *GM = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(this)))
-		{
-			GM->OpenShopAt(this);
-		}
-		return;
-	}
-
-	if (ADemoGameMode *GM = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(this)))
-	{
-		GM->HandleTileClicked(this);
-	}
-}
-
-/** Called when the mouse cursor enters the tile */
-void AHexTile::HandleOnBeginCursorOver(AActor *)
-{
-	SetHighlighted(true);
-
-	if (ADemoGameMode *GM = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(this)))
-	{
-		GM->PreviewPathTo(this);
-	}
-
-	if (TileType == EHexTileType::Shop || bIsShop)
-	{
-		if (UStaticMeshComponent *Mesh = GetVisualMesh())
-		{
-			if (!Mesh->bRenderCustomDepth)
-			{
-				Mesh->SetRenderCustomDepth(true);
-			}
-		}
-	}
-}
-
-/** Called when the mouse cursor leaves the tile */
-void AHexTile::HandleOnEndCursorOver(AActor *)
-{
-	SetHighlighted(false);
-
-	if (ADemoGameMode *GM = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(this)))
-	{
-		GM->ClearPreview();
-	}
-
-	if (TileType == EHexTileType::Shop || bIsShop)
-	{
-		if (UStaticMeshComponent *Mesh = GetVisualMesh())
-		{
-			if (Mesh->bRenderCustomDepth)
-			{
-				Mesh->SetRenderCustomDepth(false);
-			}
-		}
-	}
-}
-
-/** Changes highlight state and triggers visual effects */
-void AHexTile::SetHighlighted(bool bHighlight)
-{
-	if (bIsHighlighted == bHighlight)
-	{
-		return;
-	}
-
-	bIsHighlighted = bHighlight;
-
-	// Localize mesh once for this scope
-	UStaticMeshComponent *Mesh = GetVisualMesh();
-
-	// Material instance creation if missing
-	if (Mesh && !DynamicMaterial)
-	{
-		DynamicMaterial = Mesh->CreateAndSetMaterialInstanceDynamic(0);
-	}
-
-	// Apply material highlight parameters
-	if (DynamicMaterial)
-	{
-		DynamicMaterial->SetScalarParameterValue(PARAM_IsHighlighted, bIsHighlighted ? 1.0f : 0.0f);
-		DynamicMaterial->SetScalarParameterValue(PARAM_EmissiveStr, bIsHighlighted ? GlowStrengthOn : GlowStrengthOff);
-		DynamicMaterial->SetVectorParameterValue(PARAM_EmissiveColor, GlowColor);
-		UpdateMaterialColor();
-	}
-
-	// Outline via custom depth (only touch when value changes)
-	if (Mesh)
-	{
-		if (Mesh->bRenderCustomDepth != bIsHighlighted)
-		{
-			Mesh->SetRenderCustomDepth(bIsHighlighted);
-		}
-		Mesh->SetCustomDepthStencilValue(1);
-	}
-
-	// Elevation animation
-	TargetZ = bIsHighlighted ? (BaseZ + HighlightLiftZ) : BaseZ;
-	bElevInterpActive = true;
-	SetActorTickEnabled(true);
-}
-
-/** Updates the material color based on highlight state */
-void AHexTile::UpdateMaterialColor()
-{
-	if (!DynamicMaterial)
-	{
-		return;
-	}
-
-	const FLinearColor ColorToUse = bIsHighlighted ? HighlightColor : NormalColor;
-
-	DynamicMaterial->SetVectorParameterValue(PARAM_BaseColor, ColorToUse);
-	DynamicMaterial->SetVectorParameterValue(PARAM_Color, ColorToUse);
-	DynamicMaterial->SetVectorParameterValue(PARAM_Albedo, ColorToUse);
-	DynamicMaterial->SetScalarParameterValue(PARAM_Opacity, ColorToUse.A);
-	DynamicMaterial->SetVectorParameterValue(PARAM_EmissiveColor, GlowColor);
-	DynamicMaterial->SetScalarParameterValue(PARAM_EmissiveStr, bIsHighlighted ? GlowStrengthOn : GlowStrengthOff);
-}
-
-/** Sets the tile type and adjusts visuals if necessary */
-void AHexTile::SetTileType(EHexTileType NewType)
-{
-	TileType = NewType;
-
-	UStaticMeshComponent *Mesh = GetVisualMesh();
-
-	if (Mesh && !DynamicMaterial)
-	{
-		DynamicMaterial = Mesh->CreateAndSetMaterialInstanceDynamic(0);
-	}
-
-	if (DynamicMaterial && TileType == EHexTileType::Shop)
-	{
-		DynamicMaterial->SetVectorParameterValue(PARAM_EmissiveColor, FLinearColor(0.1f, 1.f, 0.1f, 1.f));
-		DynamicMaterial->SetScalarParameterValue(PARAM_EmissiveStr, 0.5f);
-	}
-}
-
+Error reading file with 'cp1252': 'charmap' codec can't decode byte 0x90 in position 4126: character maps to <undefined>
 
 
 ================================================
@@ -3243,30 +2546,32 @@ class UCombatComponent;
 class UTexture2D;
 class UCanvasPanel;
 class UFloatingTextWidget;
+class UWidgetAnimation;
+
 UCLASS()
 class DEMO_API UBattleWidget : public UUserWidget
 {
     GENERATED_BODY()
 
 public:
-    UBattleWidget(const FObjectInitializer &);
+    UBattleWidget(const FObjectInitializer&);
 
-    UFUNCTION(BlueprintCallable, Category = "Battle")
-    void SetSides(UCombatComponent *InPlayer, UCombatComponent *InEnemy);
+    UFUNCTION(BlueprintCallable, Category="Battle")
+    void SetSides(UCombatComponent* InPlayer, UCombatComponent* InEnemy);
 
-    UFUNCTION(BlueprintCallable, Category = "Battle")
-    void SetEnemyPortrait(UTexture2D *Tex);
+    UFUNCTION(BlueprintCallable, Category="Battle")
+    void SetEnemyPortrait(UTexture2D* Tex);
 
-    UFUNCTION(BlueprintCallable, Category = "Battle")
-    void SetPlayerPortrait(UTexture2D *Tex); // optional symmetry
+    UFUNCTION(BlueprintCallable, Category="Battle")
+    void SetPlayerPortrait(UTexture2D* Tex);
 
-    UFUNCTION(BlueprintCallable, Category = "Battle")
+    UFUNCTION(BlueprintCallable, Category="Battle")
     void StartAutoBattle();
 
-    UFUNCTION(BlueprintCallable, Category = "Battle")
+    UFUNCTION(BlueprintCallable, Category="Battle")
     void StopAutoBattle();
 
-    UFUNCTION(BlueprintCallable, Category = "Battle")
+    UFUNCTION(BlueprintCallable, Category="Battle")
     void SetVictoryXP(int32 InXP) { VictoryXP = FMath::Max(0, InXP); }
 
 protected:
@@ -3275,94 +2580,74 @@ protected:
 
 private:
     void Refresh();
-    void UpdateHighlights();                        // <-- new
-    UTextBlock *PlayerActTextAt(int32 Index) const; // <-- new
-    UTextBlock *EnemyActTextAt(int32 Index) const;  // <-- new
+    void UpdateHighlights();
     void StepAction();
     void DoAction(UCombatComponent *Source, UCombatComponent *Target, const FBattleActionSlot &ActionSlot);
-    UFUNCTION()
-    void OnQuitClicked(); // <-- new
+    
     void SpawnFloat(bool bOnEnemy, const FText &T, const FLinearColor &Color);
     void PlayHitWiggle(bool bOnEnemy);
-    bool bHighlightPlayerTurn = true;
-    int32 HL_Player = INDEX_NONE;
-    int32 HL_Enemy  = INDEX_NONE;
+    void UpdateDeathMasks();
+    void GrantVictoryXP();
+
+    UTextBlock *PlayerActTextAt(int32 Index) const;
+    UTextBlock *EnemyActTextAt(int32 Index) const;
+
+    UFUNCTION()
+    void OnQuitClicked();
 
 private:
     FTimerHandle RefreshTimer;
     FTimerHandle ActionTimer;
 
-    UPROPERTY()
-    UCombatComponent *PlayerCombat = nullptr;
-    UPROPERTY()
-    UCombatComponent *EnemyCombat = nullptr;
+    UPROPERTY() UCombatComponent* PlayerCombat = nullptr;
+    UPROPERTY() UCombatComponent* EnemyCombat  = nullptr;
 
-    int32 CurrentIndex = 0;
-    bool bBattleRunning = false;
-    bool bPlayerTurn = true; // one action per tick
+    int32  CurrentIndex = 0;
+    bool   bBattleRunning = false;
+    bool   bPlayerTurn    = true;
+    bool   bHighlightPlayerTurn = true;
+    int32  HL_Player = INDEX_NONE;
+    int32  HL_Enemy  = INDEX_NONE;
 
-    void GrantVictoryXP();
-    int32 VictoryXP = 0;
-    bool bXPGranted = false;
+    int32  VictoryXP  = 0;
+    bool   bXPGranted = false;
 
-    void UpdateDeathMasks();
+public: // Widgets
+    // Player actions
+    UPROPERTY(meta=(BindWidgetOptional)) UTextBlock* PlayerAct0 = nullptr;
+    UPROPERTY(meta=(BindWidgetOptional)) UTextBlock* PlayerAct1 = nullptr;
+    UPROPERTY(meta=(BindWidgetOptional)) UTextBlock* PlayerAct2 = nullptr;
+    UPROPERTY(meta=(BindWidgetOptional)) UTextBlock* PlayerAct3 = nullptr;
+    UPROPERTY(meta=(BindWidgetOptional)) UTextBlock* PlayerAct4 = nullptr;
 
-public: // BindWidget
-    // Player
-    UPROPERTY(meta = (BindWidgetOptional))
-    UTextBlock *PlayerAct0 = nullptr;
-    UPROPERTY(meta = (BindWidgetOptional))
-    UTextBlock *PlayerAct1 = nullptr;
-    UPROPERTY(meta = (BindWidgetOptional))
-    UTextBlock *PlayerAct2 = nullptr;
-    UPROPERTY(meta = (BindWidgetOptional))
-    UTextBlock *PlayerAct3 = nullptr;
-    UPROPERTY(meta = (BindWidgetOptional))
-    UTextBlock *PlayerAct4 = nullptr;
+    // Enemy actions
+    UPROPERTY(meta=(BindWidgetOptional)) UTextBlock* EnemyAct0 = nullptr;
+    UPROPERTY(meta=(BindWidgetOptional)) UTextBlock* EnemyAct1 = nullptr;
+    UPROPERTY(meta=(BindWidgetOptional)) UTextBlock* EnemyAct2 = nullptr;
+    UPROPERTY(meta=(BindWidgetOptional)) UTextBlock* EnemyAct3 = nullptr;
+    UPROPERTY(meta=(BindWidgetOptional)) UTextBlock* EnemyAct4 = nullptr;
 
-    UPROPERTY(meta = (BindWidgetOptional))
-    UTextBlock *EnemyAct0 = nullptr;
-    UPROPERTY(meta = (BindWidgetOptional))
-    UTextBlock *EnemyAct1 = nullptr;
-    UPROPERTY(meta = (BindWidgetOptional))
-    UTextBlock *EnemyAct2 = nullptr;
-    UPROPERTY(meta = (BindWidgetOptional))
-    UTextBlock *EnemyAct3 = nullptr;
-    UPROPERTY(meta = (BindWidgetOptional))
-    UTextBlock *EnemyAct4 = nullptr;
+    // Portraits
+    UPROPERTY(meta=(BindWidgetOptional)) UImage* PlayerPortrait = nullptr;
+    UPROPERTY(meta=(BindWidgetOptional)) UImage* EnemyPortrait  = nullptr;
 
-    UPROPERTY(meta = (BindWidgetOptional))
-    UImage *PlayerPortrait = nullptr;
-    UPROPERTY(meta = (BindWidgetOptional))
-    UImage *EnemyPortrait = nullptr;
+    // HP
+    UPROPERTY(meta=(BindWidgetOptional)) UProgressBar* PlayerHPBar  = nullptr;
+    UPROPERTY(meta=(BindWidgetOptional)) UTextBlock*   PlayerHPText = nullptr;
+    UPROPERTY(meta=(BindWidgetOptional)) UProgressBar* EnemyHPBar   = nullptr;
+    UPROPERTY(meta=(BindWidgetOptional)) UTextBlock*   EnemyHPText  = nullptr;
 
+    // Quit
+    UPROPERTY(meta=(BindWidget)) UButton* BtnQuit = nullptr;
 
-    // Player side
-UPROPERTY(meta=(BindWidgetOptional)) UProgressBar* PlayerHPBar  = nullptr;
-UPROPERTY(meta=(BindWidgetOptional)) UTextBlock*   PlayerHPText = nullptr;
-
-// Enemy side
-UPROPERTY(meta=(BindWidgetOptional)) UProgressBar* EnemyHPBar   = nullptr;
-UPROPERTY(meta=(BindWidgetOptional)) UTextBlock*   EnemyHPText  = nullptr;
-    // Quit button
-    UPROPERTY(meta = (BindWidget))
-    UButton *BtnQuit = nullptr; // add a Button named BtnQuit in the BP
-
-    // FX layers
-    UPROPERTY(EditAnywhere, Category = "Battle|FX")
-    TSubclassOf<UFloatingTextWidget> FloatingTextClass;
-    UPROPERTY(meta = (BindWidget))
-    UCanvasPanel *PlayerFXLayer = nullptr;
-    UPROPERTY(meta = (BindWidget))
-    UCanvasPanel *EnemyFXLayer = nullptr;
-    UPROPERTY(Transient, meta = (BindWidgetAnimOptional))
-    class UWidgetAnimation *PlayerHit = nullptr;
-    UPROPERTY(Transient, meta = (BindWidgetAnimOptional))
-    class UWidgetAnimation *EnemyHit = nullptr;
-    UPROPERTY(meta = (BindWidget))
-    class UImage *PlayerDeathMask = nullptr;
-    UPROPERTY(meta = (BindWidget))
-    class UImage *EnemyDeathMask = nullptr;
+    // FX
+    UPROPERTY(EditAnywhere, Category="Battle|FX") TSubclassOf<UFloatingTextWidget> FloatingTextClass;
+    UPROPERTY(meta=(BindWidget)) UCanvasPanel* PlayerFXLayer = nullptr;
+    UPROPERTY(meta=(BindWidget)) UCanvasPanel* EnemyFXLayer  = nullptr;
+    UPROPERTY(Transient, meta=(BindWidgetAnimOptional)) UWidgetAnimation* PlayerHit = nullptr;
+    UPROPERTY(Transient, meta=(BindWidgetAnimOptional)) UWidgetAnimation* EnemyHit  = nullptr;
+    UPROPERTY(meta=(BindWidget)) UImage* PlayerDeathMask = nullptr;
+    UPROPERTY(meta=(BindWidget)) UImage* EnemyDeathMask  = nullptr;
 };
 
 
@@ -3543,6 +2828,8 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Battle")
     void OpenLoadoutEditor();
 
+    UFUNCTION() void OnPawnArrived(AHexPawn* Pawn);
+
         
 protected:
     /** Engine lifecycle */
@@ -3557,8 +2844,8 @@ protected:
     void InitializePawnStartTile(const FHexAxialCoordinates &InStartCoords);
 
     /** Tile class used to spawn the grid */
-    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hex|Grid", meta = (AllowAbstract = "false"))
-    TSubclassOf<AHexTile> HexTileClass = nullptr;
+    UPROPERTY(EditAnywhere, Category="Hex|Grid")
+    TSubclassOf<class AHexTile> HexTileClass;
 
     /** Grid generation parameters */
     UPROPERTY(EditDefaultsOnly, Category = "Hex")
@@ -4169,149 +3456,7 @@ private:
 ================================================
 FILE: Public/HexTile.h
 ================================================
-#pragma once
-
-#include "CoreMinimal.h"
-#include "GameFramework/Actor.h"
-#include "HexCoordinates.h"
-#include "HexTile.generated.h"
-
-/** Tile categories used for visuals and interactions */
-UENUM(BlueprintType)
-enum class EHexTileType : uint8
-{
-    Normal UMETA(DisplayName="Normal"),
-    Shop   UMETA(DisplayName="Shop"),
-    Spawn  UMETA(DisplayName="Spawn"),
-    Goal   UMETA(DisplayName="Goal")
-};
-
-class USceneComponent;
-class UStaticMeshComponent;
-class UMaterialInstanceDynamic;
-
-UCLASS(Blueprintable)
-class DEMO_API AHexTile : public AActor
-{
-    GENERATED_BODY()
-
-public:
-    /** Construct default components and set ticking policy */
-    AHexTile();
-
-    /** Returns the main visual mesh (cached) */
-    UFUNCTION(BlueprintPure, Category="Hex")
-    UStaticMeshComponent* GetVisualMesh();
-
-    /** Sets axial grid coordinates */
-    UFUNCTION(BlueprintCallable, Category="Hex")
-    void SetAxialCoordinates(const FHexAxialCoordinates& In) { Axial = In; }
-
-    /** Gets axial grid coordinates (const ref) */
-    UFUNCTION(BlueprintPure, Category="Hex")
-    const FHexAxialCoordinates& GetAxialCoordinates() const { return Axial; }
-
-    /** Toggle highlight visuals (glow, outline, elevation) */
-    UFUNCTION(BlueprintCallable, Category="Hex|Highlight")
-    void SetHighlighted(bool bHighlight);
-
-    /** Returns current highlight state */
-    UFUNCTION(BlueprintPure, Category="Hex|Highlight")
-    bool IsHighlighted() const { return bIsHighlighted; }
-
-    /** Sets the tile type and updates visuals if needed */
-    UFUNCTION(BlueprintCallable, Category="Hex|Type")
-    void SetTileType(EHexTileType NewType);
-
-    /** Returns the tile type */
-    UFUNCTION(BlueprintPure, Category="Hex|Type")
-    EHexTileType GetTileType() const { return TileType; }
-
-    /** Optional flag to mark a tile as shop via editor */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Hex")
-    bool bIsShop = false;
-
-protected:
-    /** Bind input-like events and initialize highlight hooks */
-    virtual void PostInitializeComponents() override;
-
-    /** Initialize materials, cache base Z, and prepare visuals */
-    virtual void BeginPlay() override;
-
-    /** Smooth elevation interpolation while highlighted */
-    virtual void Tick(float DeltaSeconds) override;
-
-    /** Click handler (opens shop or forwards to GameMode) */
-    UFUNCTION() void HandleOnClicked(AActor* TouchedActor, FKey ButtonPressed);
-
-    /** Hover begin handler (preview path + outline) */
-    UFUNCTION() void HandleOnBeginCursorOver(AActor* TouchedActor);
-
-    /** Hover end handler (clear preview + outline) */
-    UFUNCTION() void HandleOnEndCursorOver(AActor* TouchedActor);
-
-private:
-    // Components
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Hex|Comp", meta=(AllowPrivateAccess="true"))
-    USceneComponent* SceneRoot = nullptr;
-
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Hex|Comp", meta=(AllowPrivateAccess="true"))
-    UStaticMeshComponent* TileMesh = nullptr;
-
-    UPROPERTY(Transient)
-    UStaticMeshComponent* CachedVisualMesh = nullptr;
-
-    UPROPERTY(EditDefaultsOnly, Category="Hex|Comp")
-    FName VisualMeshName = TEXT("StaticMesh");
-
-    UPROPERTY(EditDefaultsOnly, Category="Hex|Comp")
-    FName VisualMeshTag = TEXT("HexVisual");
-
-    // Data
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Hex|Data", meta=(DisplayName="Axial Coordinates", AllowPrivateAccess="true"))
-    FHexAxialCoordinates Axial;
-
-    // Type & tint
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Hex|Type", meta=(AllowPrivateAccess="true"))
-    EHexTileType TileType = EHexTileType::Normal;
-
-    UPROPERTY(EditAnywhere, Category="Hex|Type")
-    FLinearColor TypeTint_Shop = FLinearColor(0.1f, 1.f, 0.1f, 1.f);
-
-    // Highlight colors
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Hex|Highlight", meta=(AllowPrivateAccess="true"))
-    FLinearColor HighlightColor = FLinearColor(1.f, 1.f, 0.f, 1.f);
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Hex|Highlight", meta=(AllowPrivateAccess="true"))
-    FLinearColor NormalColor = FLinearColor(1.f, 1.f, 1.f, 0.5f);
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Hex|Highlight", meta=(AllowPrivateAccess="true"))
-    FLinearColor GlowColor = FLinearColor(1.f, 0.2f, 0.f, 1.f);
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Hex|Highlight", meta=(ClampMin="0.0", AllowPrivateAccess="true"))
-    float GlowStrengthOn = 2.0f;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Hex|Highlight", meta=(ClampMin="0.0", AllowPrivateAccess="true"))
-    float GlowStrengthOff = 0.0f;
-
-    // Highlight elevation
-    UPROPERTY(EditAnywhere, Category="Hex|Highlight")
-    float HighlightLiftZ = 10.f;
-
-    UPROPERTY(EditAnywhere, Category="Hex|Highlight", meta=(ClampMin="0.0"))
-    float HighlightLerpSpeed = 12.f;
-
-    // Runtime state
-    UPROPERTY() float BaseZ = 0.f;
-    UPROPERTY() float TargetZ = 0.f;
-    UPROPERTY() bool  bElevInterpActive = false;
-    UPROPERTY() bool  bIsHighlighted = false;
-    UPROPERTY() UMaterialInstanceDynamic* DynamicMaterial = nullptr;
-
-    /** Updates material parameters based on highlight state */
-    void UpdateMaterialColor();
-};
-
+Error reading file with 'cp1252': 'charmap' codec can't decode byte 0x90 in position 4126: character maps to <undefined>
 
 
 ================================================

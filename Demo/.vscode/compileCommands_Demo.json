@@ -24,6 +24,38 @@
 		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
 	},
 	{
+		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Private\\ActionEntryWidget.cpp",
+		"arguments": [
+			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Demo\\Demo.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Private\\BattleActions.cpp",
+		"arguments": [
+			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Demo\\Demo.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Private\\BattleWidget.cpp",
+		"arguments": [
+			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Demo\\Demo.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Private\\CombatComponent.cpp",
+		"arguments": [
+			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Demo\\Demo.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
 		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Private\\DemoGameMode.cpp",
 		"arguments": [
 			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
@@ -32,7 +64,23 @@
 		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
 	},
 	{
+		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Private\\FloatingTextWidget.cpp",
+		"arguments": [
+			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Demo\\Demo.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
 		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Private\\HexAnimationManager.cpp",
+		"arguments": [
+			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Demo\\Demo.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Private\\HexEnemyPawn.cpp",
 		"arguments": [
 			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
 			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Demo\\Demo.1.rsp"
@@ -80,6 +128,14 @@
 		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
 	},
 	{
+		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Private\\LoadoutEditorWidget.cpp",
+		"arguments": [
+			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Demo\\Demo.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
 		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Private\\PathView.cpp",
 		"arguments": [
 			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
@@ -88,7 +144,71 @@
 		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
 	},
 	{
+		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Private\\PlayerStatsWidget.cpp",
+		"arguments": [
+			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Demo\\Demo.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Public\\ActionDragOperation.h",
+		"arguments": [
+			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Demo\\Demo.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Public\\ActionEntryWidget.h",
+		"arguments": [
+			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Demo\\Demo.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Public\\BattleActions.h",
+		"arguments": [
+			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Demo\\Demo.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Public\\BattleWidget.h",
+		"arguments": [
+			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Demo\\Demo.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Public\\CombatComponent.h",
+		"arguments": [
+			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Demo\\Demo.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
 		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Public\\DemoGameMode.h",
+		"arguments": [
+			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Demo\\Demo.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Public\\EnemyDefinition.h",
+		"arguments": [
+			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Demo\\Demo.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Public\\FloatingTextWidget.h",
 		"arguments": [
 			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
 			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Demo\\Demo.1.rsp"
@@ -113,6 +233,14 @@
 	},
 	{
 		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Public\\HexCoordinates.h",
+		"arguments": [
+			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Demo\\Demo.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Public\\HexEnemyPawn.h",
 		"arguments": [
 			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
 			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Demo\\Demo.1.rsp"
@@ -160,7 +288,23 @@
 		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
 	},
 	{
+		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Public\\LoadoutEditorWidget.h",
+		"arguments": [
+			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Demo\\Demo.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
 		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Public\\PathView.h",
+		"arguments": [
+			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Demo\\Demo.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "C:\\src\\rpgPartyUnreal\\Demo\\Source\\Demo\\Public\\PlayerStatsWidget.h",
 		"arguments": [
 			"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
 			"@C:\\src\\rpgPartyUnreal\\Demo\\.vscode\\compileCommands_Demo\\Demo.1.rsp"

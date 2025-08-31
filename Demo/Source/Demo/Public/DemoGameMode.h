@@ -94,6 +94,8 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Battle")
     void OpenLoadoutEditor();
 
+    UFUNCTION() void OnPawnArrived(AHexPawn* Pawn);
+
         
 protected:
     /** Engine lifecycle */
@@ -108,8 +110,8 @@ protected:
     void InitializePawnStartTile(const FHexAxialCoordinates &InStartCoords);
 
     /** Tile class used to spawn the grid */
-    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hex|Grid", meta = (AllowAbstract = "false"))
-    TSubclassOf<AHexTile> HexTileClass = nullptr;
+    UPROPERTY(EditAnywhere, Category="Hex|Grid")
+    TSubclassOf<class AHexTile> HexTileClass;
 
     /** Grid generation parameters */
     UPROPERTY(EditDefaultsOnly, Category = "Hex")

@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Materials/MaterialInterface.h"
 #include "HexCoordinates.h"
 #include "HexTile.generated.h"
 
@@ -11,6 +12,7 @@ enum class EHexTileType : uint8
 {
     Normal UMETA(DisplayName="Normal"),
     Shop   UMETA(DisplayName="Shop"),
+    Enemy  UMETA(DisplayName="Enemy"),
     Spawn  UMETA(DisplayName="Spawn"),
     Goal   UMETA(DisplayName="Goal")
 };
@@ -48,10 +50,6 @@ public:
     UFUNCTION(BlueprintPure, Category="Hex|Highlight")
     bool IsHighlighted() const { return bIsHighlighted; }
 
-    /** Sets the tile type and updates visuals if needed */
-    UFUNCTION(BlueprintCallable, Category="Hex|Type")
-    void SetTileType(EHexTileType NewType);
-
     /** Returns the tile type */
     UFUNCTION(BlueprintPure, Category="Hex|Type")
     EHexTileType GetTileType() const { return TileType; }
@@ -59,6 +57,17 @@ public:
     /** Optional flag to mark a tile as shop via editor */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Hex")
     bool bIsShop = false;
+
+    /** Materials to use per type (set in BP_HexTile) */
+    UPROPERTY(EditAnywhere, Category="Hex|Materials")
+    TSoftObjectPtr<UMaterialInterface> MatNormal;
+
+    UPROPERTY(EditAnywhere, Category="Hex|Materials")
+    TSoftObjectPtr<UMaterialInterface> MatEnemy;
+
+    /** Set tile type and update visuals */
+    UFUNCTION(BlueprintCallable, Category="Hex")
+    void SetTileType(EHexTileType NewType);
 
 protected:
     /** Bind input-like events and initialize highlight hooks */
@@ -78,6 +87,8 @@ protected:
 
     /** Hover end handler (clear preview + outline) */
     UFUNCTION() void HandleOnEndCursorOver(AActor* TouchedActor);
+
+    virtual void OnConstruction(const FTransform& Xform) override;
 
 private:
     // Components
@@ -102,7 +113,7 @@ private:
 
     // Type & tint
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Hex|Type", meta=(AllowPrivateAccess="true"))
-    EHexTileType TileType = EHexTileType::Normal;
+    EHexTileType TileType = EHexTileType::Normal;   // ← single source of truth
 
     UPROPERTY(EditAnywhere, Category="Hex|Type")
     FLinearColor TypeTint_Shop = FLinearColor(0.1f, 1.f, 0.1f, 1.f);
@@ -139,4 +150,7 @@ private:
 
     /** Updates material parameters based on highlight state */
     void UpdateMaterialColor();
+
+    /** Applies MatNormal/MatEnemy based on TileType */
+    void ApplyMaterialForType();
 };

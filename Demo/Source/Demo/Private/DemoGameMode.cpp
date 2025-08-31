@@ -253,7 +253,6 @@ ADemoGameMode::ADemoGameMode()
 void ADemoGameMode::BeginPlay()
 {
     Super::BeginPlay();
-
     if (APlayerController *PC = GetWorld()->GetFirstPlayerController())
     {
         PC->InputComponent->BindAction("TestBattle", IE_Pressed, this, &ADemoGameMode::StartTestBattle);
@@ -427,14 +426,22 @@ void ADemoGameMode::HandleTileClicked(AHexTile *ClickedTile)
 
     AHexTile *FromTile = HexP->GetCurrentTile();
     if (!FromTile)
+{
+    HexP->SetCurrentTile(ClickedTile);
+    HexP->SetActorLocation(ClickedTile->GetActorLocation());
+    UE_LOG(LogTemp, Warning, TEXT("Affectation initiale -> (%d,%d)"),
+           ClickedTile->GetAxialCoordinates().Q, ClickedTile->GetAxialCoordinates().R);
+
+    if (ClickedTile->GetTileType() == EHexTileType::Enemy)
     {
-        HexP->SetCurrentTile(ClickedTile);
-        HexP->SetActorLocation(ClickedTile->GetActorLocation());
-        UE_LOG(LogTemp, Warning, TEXT("Affectation initiale de la tuile du Pawn -> (%d,%d)"),
-               ClickedTile->GetAxialCoordinates().Q, ClickedTile->GetAxialCoordinates().R);
-        UpdateReachableVisibility(3);
-        return;
+        StartTestBattle();
+        // keep tile as Enemy as requested
+        // ClickedTile->SetTileType(EHexTileType::Normal); // do NOT reset now
     }
+    UpdateReachableVisibility(3);
+    return;
+}
+
 
     const FHexAxialCoordinates Start = FromTile->GetAxialCoordinates();
     const FHexAxialCoordinates Goal = ClickedTile->GetAxialCoordinates();
@@ -851,4 +858,18 @@ FName ADemoGameMode::PickRandomEnemyIdFromCatalog() const
                             { return N.ToString(); }),
            idx, *Keys[idx].ToString());
     return Keys[idx];
+}
+
+void ADemoGameMode::OnPawnArrived(AHexPawn* Pawn)
+{
+    if (!Pawn) return;
+    if (AHexTile* T = Pawn->GetCurrentTile())
+    {
+        if (T->GetTileType() == EHexTileType::Enemy)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[TileEvent] Enemy tile at (%d,%d)"),
+                   T->GetAxialCoordinates().Q, T->GetAxialCoordinates().R);
+            StartTestBattle();
+        }
+    }
 }
