@@ -8,6 +8,8 @@ enum class EBattleAction : uint8
     None   UMETA(DisplayName="None"),
     Attack UMETA(DisplayName="Attack"),
     Heal   UMETA(DisplayName="Heal"),
+    Fireball UMETA(DisplayName="Fireball"),
+    
     // add more later
 };
 
@@ -35,6 +37,7 @@ public:
         {
             case EBattleAction::Attack: return FText::FromString(TEXT("Attack"));
             case EBattleAction::Heal:   return FText::FromString(TEXT("Heal"));
+            case EBattleAction::Fireball:   return FText::FromString(TEXT("Fireball"));
             default:                    return FText::FromString(TEXT("-"));
         }
     }

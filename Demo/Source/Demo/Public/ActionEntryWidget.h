@@ -2,6 +2,7 @@
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
 #include "BattleActions.h"
+#include "Blueprint/DragDropOperation.h"
 #include "ActionEntryWidget.generated.h"
 
 class UTextBlock;
@@ -27,6 +28,8 @@ protected:
 	virtual void NativeConstruct() override;
 	virtual FReply NativeOnPreviewMouseButtonDown(const FGeometry &, const FPointerEvent &) override;
 	virtual void NativeOnDragDetected(const FGeometry &Geo, const FPointerEvent &MouseEvent, UDragDropOperation *&OutOp) override;
+	virtual void NativeOnDragCancelled(const FDragDropEvent &Ev, UDragDropOperation *Op) override;
+	virtual bool NativeOnDrop(const FGeometry &Geo, const FDragDropEvent &Ev, UDragDropOperation *Op) override;
 
 private:
 	void RefreshLabel();

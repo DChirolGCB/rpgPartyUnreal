@@ -62,24 +62,6 @@ int32 ULoadoutEditorWidget::HitTestSlotIndex(const FVector2D& ScreenPos) const
     return INDEX_NONE;
 }
 
-bool ULoadoutEditorWidget::NativeOnDrop(const FGeometry& Geo, const FDragDropEvent& Ev, UDragDropOperation* Op)
-{
-    const FVector2D Screen = Ev.GetScreenSpacePosition();
-    const int32 Index = HitTestSlotIndex(Screen);
-    if (Index == INDEX_NONE) return false;
-
-    if (UActionDragOperation* A = Cast<UActionDragOperation>(Op))
-    {
-        if (!EditorLoadout.IsValidIndex(Index)) return false;
-        EditorLoadout[Index].Action = A->Action;
-        EditorLoadout[Index].SlotCost = 1;
-        SelectedSlot = Index;
-        RefreshSlots();
-        return true;
-    }
-    return false;
-}
-
 // slot selection
 void ULoadoutEditorWidget::OnSlot0(){ SelectedSlot=0; }
 void ULoadoutEditorWidget::OnSlot1(){ SelectedSlot=1; }
@@ -97,4 +79,98 @@ void ULoadoutEditorWidget::OnCancel()
 {
     // discard working copy; just close
     RemoveFromParent();
+}
+
+void ULoadoutEditorWidget::SetSlotHighlight(int32 Index, bool /*bOn*/)
+{
+    auto Reset = [&](UButton* Btn, UTextBlock* Txt)
+    {
+        if (Btn) Btn->SetRenderOpacity(0.8f);
+        if (Txt) Txt->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+    };
+    auto Hi = [&](UButton* Btn, UTextBlock* Txt)
+    {
+        if (Btn) Btn->SetRenderOpacity(1.0f);
+        if (Txt) Txt->SetColorAndOpacity(FSlateColor(FLinearColor::Yellow));
+    };
+
+    // reset all
+    Reset(SlotBtn0, SlotText0);
+    Reset(SlotBtn1, SlotText1);
+    Reset(SlotBtn2, SlotText2);
+    Reset(SlotBtn3, SlotText3);
+    Reset(SlotBtn4, SlotText4);
+
+    // highlight current
+    switch (Index)
+    {
+        case 0: Hi(SlotBtn0, SlotText0); break;
+        case 1: Hi(SlotBtn1, SlotText1); break;
+        case 2: Hi(SlotBtn2, SlotText2); break;
+        case 3: Hi(SlotBtn3, SlotText3); break;
+        case 4: Hi(SlotBtn4, SlotText4); break;
+        default: break;
+    }
+}
+
+void ULoadoutEditorWidget::NativeOnDragEnter(const FGeometry& Geo, const FDragDropEvent& Ev, UDragDropOperation* Op)
+{
+    Super::NativeOnDragEnter(Geo, Ev, Op);
+    HoveredSlot = HitTestSlotIndex(Ev.GetScreenSpacePosition());
+    SetSlotHighlight(HoveredSlot, true);
+    SetSlotsHitTest(false);               // <-- let root receive OnDrop
+}
+
+void ULoadoutEditorWidget::NativeOnDragLeave(const FDragDropEvent& Ev, UDragDropOperation* Op)
+{
+    Super::NativeOnDragLeave(Ev, Op);
+    HoveredSlot = INDEX_NONE;
+    SetSlotHighlight(INDEX_NONE, false);
+    SetSlotsHitTest(true);                // <-- restore
+}
+
+bool ULoadoutEditorWidget::NativeOnDragOver(const FGeometry& Geo, const FDragDropEvent& Ev, UDragDropOperation* Op)
+{
+    const int32 NewIdx = HitTestSlotIndex(Ev.GetScreenSpacePosition());
+    if (NewIdx != HoveredSlot)
+    {
+        HoveredSlot = NewIdx;
+        SetSlotHighlight(HoveredSlot, true);
+    }
+    return true;
+}
+
+bool ULoadoutEditorWidget::NativeOnDrop(const FGeometry& Geo, const FDragDropEvent& Ev, UDragDropOperation* Op)
+{
+    SetSlotsHitTest(true);                // <-- restore
+    SetSlotHighlight(INDEX_NONE, false);
+    HoveredSlot = INDEX_NONE;
+
+    const int32 Index = HitTestSlotIndex(Ev.GetScreenSpacePosition());
+    if (!EditorLoadout.IsValidIndex(Index)) return false;
+
+    if (UActionDragOperation* Drag = Cast<UActionDragOperation>(Op))
+    {
+        EditorLoadout[Index].Action   = Drag->Action;
+        EditorLoadout[Index].SlotCost = 1;
+        SelectedSlot = Index;
+        RefreshSlots();
+
+        if (UWidget* DV = Cast<UWidget>(Drag->DefaultDragVisual))
+            DV->SetVisibility(ESlateVisibility::Visible);
+        return true;
+    }
+    return false;
+}
+
+
+void ULoadoutEditorWidget::SetSlotsHitTest(bool bEnable)
+{
+    auto Set = [&](UButton* Btn)
+    {
+        if (!Btn) return;
+        Btn->SetVisibility(bEnable ? ESlateVisibility::Visible
+                                   : ESlateVisibility::SelfHitTestInvisible);
+    };
+    Set(SlotBtn0); Set(SlotBtn1); Set(SlotBtn2); Set(SlotBtn3); Set(SlotBtn4);
 }

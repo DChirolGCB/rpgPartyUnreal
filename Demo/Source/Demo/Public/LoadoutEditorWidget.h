@@ -20,6 +20,9 @@ public:
 protected:
     virtual void NativeConstruct() override;
     virtual bool NativeOnDrop(const FGeometry& Geo, const FDragDropEvent& DragDropEvent, UDragDropOperation* Op) override;
+    virtual void NativeOnDragEnter(const FGeometry& Geo, const FDragDropEvent& Ev, UDragDropOperation* Op) override;
+    virtual void NativeOnDragLeave(const FDragDropEvent& Ev, UDragDropOperation* Op) override;
+    virtual bool NativeOnDragOver (const FGeometry& Geo, const FDragDropEvent& Ev, UDragDropOperation* Op) override;
 
 private:
     void RefreshSlots();
@@ -37,6 +40,10 @@ private:
     TArray<FBattleActionSlot> OriginalLoadout;
     TArray<FBattleActionSlot> EditorLoadout;
 
+    int32 HoveredSlot = INDEX_NONE;
+    void SetSlotHighlight(int32 Index, bool bOn);
+    void SetSlotsHitTest(bool bEnable);
+
 public: // BindWidget — left column
     UPROPERTY(meta=(BindWidget)) UButton*    SlotBtn0 = nullptr; UPROPERTY(meta=(BindWidget)) UTextBlock* SlotText0 = nullptr;
     UPROPERTY(meta=(BindWidget)) UButton*    SlotBtn1 = nullptr; UPROPERTY(meta=(BindWidget)) UTextBlock* SlotText1 = nullptr;
@@ -47,6 +54,7 @@ public: // BindWidget — left column
 public: // BindWidget — right panel actions (replace your old buttons with ActionEntryWidget instances)
     UPROPERTY(meta=(BindWidget)) class UActionEntryWidget* ActAttack = nullptr;
     UPROPERTY(meta=(BindWidget)) class UActionEntryWidget* ActHeal   = nullptr;
+    UPROPERTY(meta=(BindWidget)) class UActionEntryWidget* ActFireball = nullptr;
 
 public: // BindWidget — footer
     UPROPERTY(meta=(BindWidget)) UButton* BtnSave = nullptr;

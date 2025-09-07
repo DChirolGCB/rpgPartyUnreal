@@ -71,7 +71,7 @@ void UBattleWidget::StartAutoBattle()
     if (BtnQuit)
         BtnQuit->SetIsEnabled(false);
     // UpdateHighlights();
-    GetWorld()->GetTimerManager().SetTimer(ActionTimer, this, &UBattleWidget::StepAction, 0.8f, true, 0.0f);
+    GetWorld()->GetTimerManager().SetTimer(ActionTimer, this, &UBattleWidget::StepAction, 0.5f, true, 0.0f);
 }
 
 void UBattleWidget::StopAutoBattle()
@@ -265,6 +265,21 @@ void UBattleWidget::DoAction(UCombatComponent *Source, UCombatComponent *Target,
         SpawnFloat(bSourceIsEnemy, Msg, FLinearColor(0.25f, 1.f, 0.25f));
     }
     break;
+
+    case EBattleAction::Fireball:
+    {
+        if (!Target)
+            break;
+
+        const bool bTargetIsEnemy = (Target == EnemyCombat);
+        const int32 Dmg = Source->GetStats().Attack + 2; // fireball stronger
+
+        Target->ApplyDamage(Dmg);
+        PlayHitWiggle(bTargetIsEnemy);
+
+        const FText Msg = FText::FromString(FString::Printf(TEXT("-%d"), Dmg));
+        SpawnFloat(bTargetIsEnemy, Msg, FLinearColor(1.f, 0.5f, 0.0f)); // orange
+    }
 
     default:
         break;
