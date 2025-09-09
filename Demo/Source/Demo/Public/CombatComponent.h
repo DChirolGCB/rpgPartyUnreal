@@ -54,6 +54,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Battle") void SetLoadout(const TArray<FBattleActionSlot>& In);
     UFUNCTION(BlueprintCallable, Category="Combat") void SetStats(const FCombatStats& In) { Stats = In; Stats.HP = FMath::Clamp(Stats.HP, 0, Stats.MaxHP); }
 
+    UFUNCTION(BlueprintCallable, Category="Combat") void ActivateDefendShield();
+
 protected:
     virtual void BeginPlay() override;  // <-- add this
 
@@ -68,4 +70,7 @@ private:
 
     UPROPERTY(EditAnywhere, Category="Battle")
     TArray<FBattleActionSlot> Loadout;
+
+    // transient flag used by Defend action (reduces next incoming damage)
+    bool bHasDefendShield = false;
 };

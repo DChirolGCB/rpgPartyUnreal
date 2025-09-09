@@ -132,11 +132,41 @@ FReply UActionEntryWidget::NativeOnPreviewMouseButtonDown(const FGeometry& Geo, 
 
 void UActionEntryWidget::NativeOnDragDetected(const FGeometry& Geo, const FPointerEvent& E, UDragDropOperation*& OutOp)
 {
-    UActionDragOperation* Op = NewObject<UActionDragOperation>(this);
-    Op->Payload = this;
-    Op->DefaultDragVisual = this; // ghost preview
-    Op->Action = Action;
+    Super::NativeOnDragDetected(Geo, E, OutOp);
+
+    auto* Op = NewObject<UDragDropOperation>(this);
+    Op->Pivot = EDragPivot::MouseDown;
+
+    // Use a proxy visual that does NOT block hit tests
+    UActionEntryWidget* Proxy = CreateWidget<UActionEntryWidget>(GetWorld(), GetClass());
+    if (Proxy)
+    {
+        // copy minimal visuals
+        if (Proxy->Label && Label) Proxy->Label->SetText(Label->GetText());
+        Proxy->SetIsEnabled(false);
+        Proxy->SetVisibility(ESlateVisibility::HitTestInvisible);
+        Op->DefaultDragVisual = Proxy;
+    }
+    else
+    {
+        // fallback: use self but make it hit-test-invisible during drag
+        SetVisibility(ESlateVisibility::HitTestInvisible);
+        Op->DefaultDragVisual = this;
+    }
+
     OutOp = Op;
+}
+
+void UActionEntryWidget::NativeOnDragCancelled(const FDragDropEvent& Ev, UDragDropOperation* Op)
+{
+    Super::NativeOnDragCancelled(Ev, Op);
+    SetVisibility(ESlateVisibility::Visible);
+}
+
+bool UActionEntryWidget::NativeOnDrop(const FGeometry& Geo, const FDragDropEvent& Ev, UDragDropOperation* Op)
+{
+    SetVisibility(ESlateVisibility::Visible);
+    return Super::NativeOnDrop(Geo, Ev, Op);
 }
 
 
@@ -2195,7 +2225,236 @@ void UHexSpriteComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty> &
 ================================================
 FILE: Private/HexTile.cpp
 ================================================
-Error reading file with 'cp1252': 'charmap' codec can't decode byte 0x90 in position 4126: character maps to <undefined>
+// HexTile.cpp
+#include "HexTile.h"
+#include "Components/SceneComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Kismet/GameplayStatics.h"
+#include "DemoGameMode.h"
+#include "Materials/MaterialInstanceDynamic.h"
+
+namespace
+{
+    const FName PARAM_BaseColor     = TEXT("BaseColor");
+    const FName PARAM_Color         = TEXT("Color");
+    const FName PARAM_Albedo        = TEXT("Albedo");
+    const FName PARAM_Opacity       = TEXT("Opacity");
+    const FName PARAM_EmissiveColor = TEXT("EmissiveColor");
+    const FName PARAM_EmissiveStr   = TEXT("EmissiveStrength");
+    const FName PARAM_IsHighlighted = TEXT("IsHighlighted");
+}
+
+AHexTile::AHexTile()
+{
+    SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
+    RootComponent = SceneRoot;
+
+    PrimaryActorTick.bCanEverTick = true;
+    SetActorTickEnabled(false);
+}
+
+void AHexTile::PostInitializeComponents()
+{
+    Super::PostInitializeComponents();
+
+    OnClicked.AddDynamic(this, &AHexTile::HandleOnClicked);
+    OnBeginCursorOver.AddDynamic(this, &AHexTile::HandleOnBeginCursorOver);
+    OnEndCursorOver.AddDynamic(this, &AHexTile::HandleOnEndCursorOver);
+}
+
+void AHexTile::BeginPlay()
+{
+    Super::BeginPlay();
+
+    BaseZ = GetActorLocation().Z;
+    TargetZ = BaseZ;
+    bElevInterpActive = false;
+
+    if (UStaticMeshComponent* Mesh = GetVisualMesh())
+    {
+        if (Mesh->Mobility != EComponentMobility::Movable)
+            Mesh->SetMobility(EComponentMobility::Movable);
+
+        if (!DynamicMaterial)
+            DynamicMaterial = Mesh->CreateAndSetMaterialInstanceDynamic(0);
+
+        if (DynamicMaterial)
+        {
+            DynamicMaterial->SetScalarParameterValue(PARAM_IsHighlighted, bIsHighlighted ? 1.0f : 0.0f);
+            UpdateMaterialColor();
+
+            if (TileType == EHexTileType::Shop)
+            {
+                DynamicMaterial->SetVectorParameterValue(PARAM_BaseColor,     TypeTint_Shop);
+                DynamicMaterial->SetVectorParameterValue(PARAM_EmissiveColor, TypeTint_Shop);
+                DynamicMaterial->SetScalarParameterValue(PARAM_EmissiveStr,   0.5f);
+            }
+        }
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("HexTile: no visual mesh found on %s"), *GetName());
+    }
+}
+
+void AHexTile::OnConstruction(const FTransform& Xform)
+{
+    Super::OnConstruction(Xform);
+    ApplyMaterialForType();
+}
+
+void AHexTile::Tick(float DeltaSeconds)
+{
+    Super::Tick(DeltaSeconds);
+
+    if (!bElevInterpActive) return;
+
+    FVector Loc = GetActorLocation();
+    const float NewZ = FMath::FInterpTo(Loc.Z, TargetZ, DeltaSeconds, HighlightLerpSpeed);
+    Loc.Z = NewZ;
+    SetActorLocation(Loc);
+
+    if (FMath::IsNearlyEqual(NewZ, TargetZ, 0.5f))
+    {
+        Loc.Z = TargetZ;
+        SetActorLocation(Loc);
+        bElevInterpActive = false;
+        SetActorTickEnabled(false);
+    }
+}
+
+UStaticMeshComponent* AHexTile::GetVisualMesh()
+{
+    if (IsValid(CachedVisualMesh) && !CachedVisualMesh->IsBeingDestroyed())
+        return CachedVisualMesh;
+
+    if (IsValid(TileMesh))
+        return CachedVisualMesh = TileMesh;
+
+    TArray<UStaticMeshComponent*> Comps;
+    GetComponents<UStaticMeshComponent>(Comps);
+
+    if (VisualMeshTag != NAME_None)
+    {
+        for (auto* C : Comps)
+            if (IsValid(C) && C->ComponentHasTag(VisualMeshTag))
+                return CachedVisualMesh = C;
+    }
+
+    const FString Wanted = VisualMeshName.ToString();
+    for (auto* C : Comps)
+        if (IsValid(C) && C->GetName().Equals(Wanted, ESearchCase::CaseSensitive))
+            return CachedVisualMesh = C;
+
+    return CachedVisualMesh = (Comps.Num() ? Comps[0] : nullptr);
+}
+
+void AHexTile::HandleOnClicked(AActor*, FKey)
+{
+    if (TileType == EHexTileType::Shop || bIsShop || ActorHasTag(TEXT("Shop")))
+    {
+        if (ADemoGameMode* GM = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(this)))
+            GM->OpenShopAt(this);
+        return;
+    }
+
+    if (ADemoGameMode* GM = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(this)))
+        GM->HandleTileClicked(this);
+}
+
+void AHexTile::HandleOnBeginCursorOver(AActor*)
+{
+    SetHighlighted(true);
+
+    if (ADemoGameMode* GM = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(this)))
+        GM->PreviewPathTo(this);
+
+    if (TileType == EHexTileType::Shop || bIsShop)
+        if (UStaticMeshComponent* Mesh = GetVisualMesh())
+            if (!Mesh->bRenderCustomDepth)
+                Mesh->SetRenderCustomDepth(true);
+}
+
+void AHexTile::HandleOnEndCursorOver(AActor*)
+{
+    SetHighlighted(false);
+
+    if (ADemoGameMode* GM = Cast<ADemoGameMode>(UGameplayStatics::GetGameMode(this)))
+        GM->ClearPreview();
+
+    if (TileType == EHexTileType::Shop || bIsShop)
+        if (UStaticMeshComponent* Mesh = GetVisualMesh())
+            if (Mesh->bRenderCustomDepth)
+                Mesh->SetRenderCustomDepth(false);
+}
+
+void AHexTile::SetHighlighted(bool bHighlight)
+{
+    if (bIsHighlighted == bHighlight) return;
+    bIsHighlighted = bHighlight;
+
+    UStaticMeshComponent* Mesh = GetVisualMesh();
+    if (Mesh && !DynamicMaterial)
+        DynamicMaterial = Mesh->CreateAndSetMaterialInstanceDynamic(0);
+
+    if (DynamicMaterial)
+    {
+        DynamicMaterial->SetScalarParameterValue(PARAM_IsHighlighted, bIsHighlighted ? 1.0f : 0.0f);
+        DynamicMaterial->SetScalarParameterValue(PARAM_EmissiveStr,  bIsHighlighted ? GlowStrengthOn : GlowStrengthOff);
+        DynamicMaterial->SetVectorParameterValue(PARAM_EmissiveColor, GlowColor);
+        UpdateMaterialColor();
+    }
+
+    if (Mesh)
+    {
+        if (Mesh->bRenderCustomDepth != bIsHighlighted)
+            Mesh->SetRenderCustomDepth(bIsHighlighted);
+        Mesh->SetCustomDepthStencilValue(1);
+    }
+
+    TargetZ = bIsHighlighted ? (BaseZ + HighlightLiftZ) : BaseZ;
+    bElevInterpActive = true;
+    SetActorTickEnabled(true);
+}
+
+void AHexTile::UpdateMaterialColor()
+{
+    if (!DynamicMaterial) return;
+
+    const FLinearColor ColorToUse = bIsHighlighted ? HighlightColor : NormalColor;
+    DynamicMaterial->SetVectorParameterValue(PARAM_BaseColor,     ColorToUse);
+    DynamicMaterial->SetVectorParameterValue(PARAM_Color,         ColorToUse);
+    DynamicMaterial->SetVectorParameterValue(PARAM_Albedo,        ColorToUse);
+    DynamicMaterial->SetScalarParameterValue(PARAM_Opacity,       ColorToUse.A);
+    DynamicMaterial->SetVectorParameterValue(PARAM_EmissiveColor, GlowColor);
+    DynamicMaterial->SetScalarParameterValue(PARAM_EmissiveStr,   bIsHighlighted ? GlowStrengthOn : GlowStrengthOff);
+}
+
+void AHexTile::ApplyMaterialForType()
+{
+    UStaticMeshComponent* Mesh = GetVisualMesh();
+    if (!Mesh) return;
+
+    UMaterialInterface* UseMat = nullptr;
+    switch (TileType)
+    {
+        case EHexTileType::Enemy:
+            UseMat = MatEnemy.IsValid() ? MatEnemy.Get() : MatEnemy.LoadSynchronous();
+            break;
+        default: // Normal / Shop / Spawn / Goal
+            UseMat = MatNormal.IsValid() ? MatNormal.Get() : MatNormal.LoadSynchronous();
+            break;
+    }
+
+    if (UseMat) Mesh->SetMaterial(0, UseMat);
+}
+
+void AHexTile::SetTileType(EHexTileType NewType)
+{
+    TileType = NewType;
+    ApplyMaterialForType();
+}
+
 
 
 ================================================
@@ -2265,24 +2524,6 @@ int32 ULoadoutEditorWidget::HitTestSlotIndex(const FVector2D& ScreenPos) const
     return INDEX_NONE;
 }
 
-bool ULoadoutEditorWidget::NativeOnDrop(const FGeometry& Geo, const FDragDropEvent& Ev, UDragDropOperation* Op)
-{
-    const FVector2D Screen = Ev.GetScreenSpacePosition();
-    const int32 Index = HitTestSlotIndex(Screen);
-    if (Index == INDEX_NONE) return false;
-
-    if (UActionDragOperation* A = Cast<UActionDragOperation>(Op))
-    {
-        if (!EditorLoadout.IsValidIndex(Index)) return false;
-        EditorLoadout[Index].Action = A->Action;
-        EditorLoadout[Index].SlotCost = 1;
-        SelectedSlot = Index;
-        RefreshSlots();
-        return true;
-    }
-    return false;
-}
-
 // slot selection
 void ULoadoutEditorWidget::OnSlot0(){ SelectedSlot=0; }
 void ULoadoutEditorWidget::OnSlot1(){ SelectedSlot=1; }
@@ -2302,6 +2543,99 @@ void ULoadoutEditorWidget::OnCancel()
     RemoveFromParent();
 }
 
+void ULoadoutEditorWidget::SetSlotHighlight(int32 Index, bool /*bOn*/)
+{
+    auto Reset = [&](UButton* Btn, UTextBlock* Txt)
+    {
+        if (Btn) Btn->SetRenderOpacity(0.8f);
+        if (Txt) Txt->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+    };
+    auto Hi = [&](UButton* Btn, UTextBlock* Txt)
+    {
+        if (Btn) Btn->SetRenderOpacity(1.0f);
+        if (Txt) Txt->SetColorAndOpacity(FSlateColor(FLinearColor::Yellow));
+    };
+
+    // reset all
+    Reset(SlotBtn0, SlotText0);
+    Reset(SlotBtn1, SlotText1);
+    Reset(SlotBtn2, SlotText2);
+    Reset(SlotBtn3, SlotText3);
+    Reset(SlotBtn4, SlotText4);
+
+    // highlight current
+    switch (Index)
+    {
+        case 0: Hi(SlotBtn0, SlotText0); break;
+        case 1: Hi(SlotBtn1, SlotText1); break;
+        case 2: Hi(SlotBtn2, SlotText2); break;
+        case 3: Hi(SlotBtn3, SlotText3); break;
+        case 4: Hi(SlotBtn4, SlotText4); break;
+        default: break;
+    }
+}
+
+void ULoadoutEditorWidget::NativeOnDragEnter(const FGeometry& Geo, const FDragDropEvent& Ev, UDragDropOperation* Op)
+{
+    Super::NativeOnDragEnter(Geo, Ev, Op);
+    HoveredSlot = HitTestSlotIndex(Ev.GetScreenSpacePosition());
+    SetSlotHighlight(HoveredSlot, true);
+    SetSlotsHitTest(false);               // <-- let root receive OnDrop
+}
+
+void ULoadoutEditorWidget::NativeOnDragLeave(const FDragDropEvent& Ev, UDragDropOperation* Op)
+{
+    Super::NativeOnDragLeave(Ev, Op);
+    HoveredSlot = INDEX_NONE;
+    SetSlotHighlight(INDEX_NONE, false);
+    SetSlotsHitTest(true);                // <-- restore
+}
+
+bool ULoadoutEditorWidget::NativeOnDragOver(const FGeometry& Geo, const FDragDropEvent& Ev, UDragDropOperation* Op)
+{
+    const int32 NewIdx = HitTestSlotIndex(Ev.GetScreenSpacePosition());
+    if (NewIdx != HoveredSlot)
+    {
+        HoveredSlot = NewIdx;
+        SetSlotHighlight(HoveredSlot, true);
+    }
+    return true;
+}
+
+bool ULoadoutEditorWidget::NativeOnDrop(const FGeometry& Geo, const FDragDropEvent& Ev, UDragDropOperation* Op)
+{
+    SetSlotsHitTest(true);                // <-- restore
+    SetSlotHighlight(INDEX_NONE, false);
+    HoveredSlot = INDEX_NONE;
+
+    const int32 Index = HitTestSlotIndex(Ev.GetScreenSpacePosition());
+    if (!EditorLoadout.IsValidIndex(Index)) return false;
+
+    if (UActionDragOperation* Drag = Cast<UActionDragOperation>(Op))
+    {
+        EditorLoadout[Index].Action   = Drag->Action;
+        EditorLoadout[Index].SlotCost = 1;
+        SelectedSlot = Index;
+        RefreshSlots();
+
+        if (UWidget* DV = Cast<UWidget>(Drag->DefaultDragVisual))
+            DV->SetVisibility(ESlateVisibility::Visible);
+        return true;
+    }
+    return false;
+}
+
+
+void ULoadoutEditorWidget::SetSlotsHitTest(bool bEnable)
+{
+    auto Set = [&](UButton* Btn)
+    {
+        if (!Btn) return;
+        Btn->SetVisibility(bEnable ? ESlateVisibility::Visible
+                                   : ESlateVisibility::SelfHitTestInvisible);
+    };
+    Set(SlotBtn0); Set(SlotBtn1); Set(SlotBtn2); Set(SlotBtn3); Set(SlotBtn4);
+}
 
 
 ================================================
@@ -2442,6 +2776,7 @@ FILE: Public/ActionEntryWidget.h
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
 #include "BattleActions.h"
+#include "Blueprint/DragDropOperation.h"
 #include "ActionEntryWidget.generated.h"
 
 class UTextBlock;
@@ -2467,6 +2802,8 @@ protected:
 	virtual void NativeConstruct() override;
 	virtual FReply NativeOnPreviewMouseButtonDown(const FGeometry &, const FPointerEvent &) override;
 	virtual void NativeOnDragDetected(const FGeometry &Geo, const FPointerEvent &MouseEvent, UDragDropOperation *&OutOp) override;
+	virtual void NativeOnDragCancelled(const FDragDropEvent &Ev, UDragDropOperation *Op) override;
+	virtual bool NativeOnDrop(const FGeometry &Geo, const FDragDropEvent &Ev, UDragDropOperation *Op) override;
 
 private:
 	void RefreshLabel();
@@ -3484,6 +3821,9 @@ public:
 protected:
     virtual void NativeConstruct() override;
     virtual bool NativeOnDrop(const FGeometry& Geo, const FDragDropEvent& DragDropEvent, UDragDropOperation* Op) override;
+    virtual void NativeOnDragEnter(const FGeometry& Geo, const FDragDropEvent& Ev, UDragDropOperation* Op) override;
+    virtual void NativeOnDragLeave(const FDragDropEvent& Ev, UDragDropOperation* Op) override;
+    virtual bool NativeOnDragOver (const FGeometry& Geo, const FDragDropEvent& Ev, UDragDropOperation* Op) override;
 
 private:
     void RefreshSlots();
@@ -3500,6 +3840,10 @@ private:
     // working copy so Cancel can revert
     TArray<FBattleActionSlot> OriginalLoadout;
     TArray<FBattleActionSlot> EditorLoadout;
+
+    int32 HoveredSlot = INDEX_NONE;
+    void SetSlotHighlight(int32 Index, bool bOn);
+    void SetSlotsHitTest(bool bEnable);
 
 public: // BindWidget â€” left column
     UPROPERTY(meta=(BindWidget)) UButton*    SlotBtn0 = nullptr; UPROPERTY(meta=(BindWidget)) UTextBlock* SlotText0 = nullptr;

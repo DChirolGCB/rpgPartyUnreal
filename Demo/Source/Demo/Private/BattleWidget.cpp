@@ -281,6 +281,45 @@ void UBattleWidget::DoAction(UCombatComponent *Source, UCombatComponent *Target,
         SpawnFloat(bTargetIsEnemy, Msg, FLinearColor(1.f, 0.5f, 0.0f)); // orange
     }
 
+    break;
+
+    case EBattleAction::Defend:
+    {
+    // set a one-use defend shield on the source which will reduce next incoming damage by 50%
+    Source->ActivateDefendShield();
+        const bool bSourceIsEnemy = (Source == EnemyCombat);
+        const FText Msg = FText::FromString(TEXT("Defend"));
+        SpawnFloat(bSourceIsEnemy, Msg, FLinearColor(0.6f, 0.8f, 1.f)); // pale blue
+    }
+    break;
+
+    case EBattleAction::LightningBolt:
+    {
+        if (!Target)
+            break;
+
+        const bool bTargetIsEnemy = (Target == EnemyCombat);
+        const int32 Dmg = Source->GetStats().Attack + 4; // lightning stronger than fireball
+
+        Target->ApplyDamage(Dmg);
+        PlayHitWiggle(bTargetIsEnemy);
+
+        const FText Msg = FText::FromString(FString::Printf(TEXT("-%d"), Dmg));
+        SpawnFloat(bTargetIsEnemy, Msg, FLinearColor(0.2f, 0.8f, 1.f)); // cyan
+    }
+
+    break;
+
+    case EBattleAction::FullHeal:
+    {
+        const bool bSourceIsEnemy = (Source == EnemyCombat);
+        const int32 MaxHP = Source->GetStats().MaxHP;
+        Source->Heal(MaxHP); // Heal clamps to MaxHP
+        const FText Msg = FText::FromString(TEXT("Full Heal"));
+        SpawnFloat(bSourceIsEnemy, Msg, FLinearColor(0.2f, 1.f, 0.3f)); // bright green
+    }
+
+
     default:
         break;
     }

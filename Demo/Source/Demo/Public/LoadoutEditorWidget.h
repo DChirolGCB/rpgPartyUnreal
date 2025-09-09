@@ -55,6 +55,7 @@ public: // BindWidget — right panel actions (replace your old buttons with Act
     UPROPERTY(meta=(BindWidget)) class UActionEntryWidget* ActAttack = nullptr;
     UPROPERTY(meta=(BindWidget)) class UActionEntryWidget* ActHeal   = nullptr;
     UPROPERTY(meta=(BindWidget)) class UActionEntryWidget* ActFireball = nullptr;
+    // New action widgets are optional in UMG; code will attempt to find them at runtime by name.
 
 public: // BindWidget — footer
     UPROPERTY(meta=(BindWidget)) UButton* BtnSave = nullptr;

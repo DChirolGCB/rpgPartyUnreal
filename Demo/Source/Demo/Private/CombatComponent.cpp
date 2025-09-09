@@ -13,9 +13,9 @@ UCombatComponent::UCombatComponent()
     MaxSlots = 5;
     Loadout.Init(FBattleActionSlot{}, MaxSlots);
     Loadout[0].Action = EBattleAction::Attack;
-    Loadout[1].Action = EBattleAction::Attack;
+    Loadout[1].Action = EBattleAction::Defend;
     Loadout[2].Action = EBattleAction::Heal;
-    Loadout[3].Action = EBattleAction::Attack;
+    Loadout[3].Action = EBattleAction::LightningBolt;
     Loadout[4].Action = EBattleAction::Attack;
 }
 
@@ -42,7 +42,15 @@ void UCombatComponent::SetLoadout(const TArray<FBattleActionSlot>& In)
 
 void UCombatComponent::ApplyDamage(int32 RawDamage)
 {
-    const int32 dmg = FMath::Max(0, RawDamage - (Stats.Defense / 2));
+    int32 EffectiveRaw = RawDamage;
+    // if defend shield is active, halve the incoming raw damage once
+    if (bHasDefendShield)
+    {
+        EffectiveRaw = FMath::RoundToInt(float(EffectiveRaw) * 0.5f);
+        bHasDefendShield = false; // consume shield
+    }
+
+    const int32 dmg = FMath::Max(0, EffectiveRaw - (Stats.Defense / 2));
     Stats.HP = FMath::Clamp(Stats.HP - dmg, 0, Stats.MaxHP);
 }
 
@@ -73,4 +81,9 @@ void UCombatComponent::SetSlotAction(int32 Index, EBattleAction Action, int32 Co
     if (!Loadout.IsValidIndex(Index)) return;
     Loadout[Index].Action  = Action;
     Loadout[Index].SlotCost = Cost;
+}
+
+void UCombatComponent::ActivateDefendShield()
+{
+    bHasDefendShield = true;
 }

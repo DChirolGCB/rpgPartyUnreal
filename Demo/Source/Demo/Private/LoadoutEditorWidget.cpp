@@ -34,6 +34,29 @@ void ULoadoutEditorWidget::NativeConstruct()
     if (BtnCancel) BtnCancel->OnClicked.AddDynamic(this, &ULoadoutEditorWidget::OnCancel);
 
     RefreshSlots();
+
+    // Ensure the right-panel action entries reflect the available actions.
+    auto TrySet = [&](UActionEntryWidget*& Ptr, const FName& Name, EBattleAction A)
+    {
+        if (!Ptr)
+        {
+            if (UWidget* Found = GetWidgetFromName(Name))
+                Ptr = Cast<UActionEntryWidget>(Found);
+        }
+        if (Ptr) Ptr->SetAction(A);
+    };
+
+    TrySet(ActAttack, TEXT("ActAttack"), EBattleAction::Attack);
+    TrySet(ActHeal, TEXT("ActHeal"), EBattleAction::Heal);
+    TrySet(ActFireball, TEXT("ActFireball"), EBattleAction::Fireball);
+
+    // optional new entries: find by name in UMG if present and set action
+    if (UWidget* WDef = GetWidgetFromName(TEXT("ActDefend")))
+        if (UActionEntryWidget* AW = Cast<UActionEntryWidget>(WDef)) AW->SetAction(EBattleAction::Defend);
+    if (UWidget* WLin = GetWidgetFromName(TEXT("ActLightningBolt")))
+        if (UActionEntryWidget* AW = Cast<UActionEntryWidget>(WLin)) AW->SetAction(EBattleAction::LightningBolt);
+    if (UWidget* WFull = GetWidgetFromName(TEXT("ActFullHeal")))
+        if (UActionEntryWidget* AW = Cast<UActionEntryWidget>(WFull)) AW->SetAction(EBattleAction::FullHeal);
 }
 
 void ULoadoutEditorWidget::RefreshSlots()
